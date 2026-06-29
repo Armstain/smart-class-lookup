@@ -48,16 +48,19 @@ export function extractClassesFromSource(
     return { classes: [], parseError: err instanceof Error ? err.message : String(err) };
   }
 
+  const sourceLines = source.split(/\r?\n/);
   const found: ExtractedClass[] = [];
 
   const emit = (raw: string, node: t.Node) => {
     if (!raw) return;
     const loc = node.loc;
+    const lineIndex = loc ? loc.start.line - 1 : 0;
+    const contextLine = sourceLines[lineIndex] ?? raw;
     const location: ClassLocation = {
       file: filePath,
-      line: loc ? loc.start.line - 1 : 0,
+      line: lineIndex,
       column: loc ? loc.start.column : 0,
-      context: raw.trim().slice(0, 140),
+      context: contextLine.trim().slice(0, 140),
     };
     for (const token of tokenize(raw)) {
       found.push({ className: token, location });
