@@ -194,6 +194,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       opacity: 1;
     }
 
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      margin-top: 4px;
+      margin-bottom: 2px;
+      flex-shrink: 0;
+    }
+
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground, #858585);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle-label input[type="checkbox"] {
+      cursor: pointer;
+      margin: 0;
+      width: 13px;
+      height: 13px;
+      accent-color: var(--vscode-settings-checkboxBackground, #007acc);
+    }
+
     .status-text {
       font-size: 11px;
       color: var(--vscode-descriptionForeground, #858585);
@@ -331,6 +357,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       <input type="text" id="search-input" placeholder="Paste class list or HTML element..." autocomplete="off">
       <button class="clear-btn" id="clear-btn" title="Clear input">×</button>
     </div>
+    <div class="toggle-container">
+      <label class="toggle-label">
+        <input type="checkbox" id="text-search-toggle" checked>
+        <span>Include general text search</span>
+      </label>
+    </div>
     <div class="status-text" id="status-text">Indexing status...</div>
   </div>
 
@@ -344,11 +376,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const clearBtn = document.getElementById('clear-btn');
     const statusText = document.getElementById('status-text');
     const resultsContainer = document.getElementById('results-container');
+    const textSearchToggle = document.getElementById('text-search-toggle');
 
     let currentFileCount = 0;
 
     // Request clipboard content on startup/focus
     vscode.postMessage({ type: 'readClipboard' });
+
+    // Re-trigger search when toggle is changed
+    textSearchToggle.addEventListener('change', () => {
+      vscode.postMessage({
+        type: 'search',
+        value: searchInput.value,
+        textSearchEnabled: textSearchToggle.checked
+      });
+    });
 
     let debounceTimer;
     searchInput.addEventListener('input', (e) => {
@@ -356,7 +398,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       clearBtn.style.display = val ? 'flex' : 'none';
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        vscode.postMessage({ type: 'search', value: val });
+        vscode.postMessage({
+          type: 'search',
+          value: val,
+          textSearchEnabled: textSearchToggle.checked
+        });
       }, 100);
     });
 
@@ -364,7 +410,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       searchInput.value = '';
       clearBtn.style.display = 'none';
       searchInput.focus();
-      vscode.postMessage({ type: 'search', value: '' });
+      vscode.postMessage({
+        type: 'search',
+        value: '',
+        textSearchEnabled: textSearchToggle.checked
+      });
       vscode.postMessage({ type: 'clearPreview' });
     });
 
