@@ -78,7 +78,7 @@
         },
         "smartClassLookup.minScore": {
           "type": "number",
-          "default": 0.15,
+          "default": 0.3,
           "description": "Minimum match score (0-1) a file must reach to be shown in results."
         }
       }
