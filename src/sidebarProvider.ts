@@ -296,6 +296,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       white-space: nowrap;
     }
 
+    .unmatched-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+      font-size: 10px;
+    }
+
+    .unmatched-label {
+      color: var(--vscode-errorForeground, #f48771);
+      opacity: 0.8;
+      font-weight: 500;
+    }
+
+    .unmatched-class {
+      background: rgba(244, 135, 113, 0.15);
+      color: var(--vscode-errorForeground, #f48771);
+      padding: 1px 4px;
+      border-radius: 2px;
+      text-decoration: line-through;
+    }
+
     .no-results {
       padding: 20px;
       text-align: center;
@@ -399,6 +421,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         item.appendChild(header);
         item.appendChild(path);
+
+        // Show missing/unmatched classes if the match is partial
+        if (res.unmatchedClasses && res.unmatchedClasses.length > 0) {
+          const unmatchedContainer = document.createElement('div');
+          unmatchedContainer.className = 'unmatched-list';
+          
+          const label = document.createElement('span');
+          label.className = 'unmatched-label';
+          label.textContent = 'Missing: ';
+          unmatchedContainer.appendChild(label);
+
+          res.unmatchedClasses.forEach((cls) => {
+            const badge = document.createElement('span');
+            badge.className = 'unmatched-class';
+            badge.textContent = cls;
+            unmatchedContainer.appendChild(badge);
+          });
+          item.appendChild(unmatchedContainer);
+        }
 
         // Click on file level opens the first occurrence
         item.addEventListener('click', (e) => {
