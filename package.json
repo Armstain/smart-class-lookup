@@ -1,0 +1,81 @@
+{
+  "name": "smart-class-lookup",
+  "displayName": "Smart Class Lookup",
+  "description": "Paste a class list copied from DevTools and find the matching component anywhere in your workspace — even when classes are split across cn(), clsx(), classnames(), template literals, arrays, ternaries, and conditionals.",
+  "version": "0.1.0",
+  "publisher": "local-dev",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "css",
+    "tailwind",
+    "tailwindcss",
+    "uno",
+    "search",
+    "clsx",
+    "cn"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "smartClassLookup.search",
+        "title": "Smart Class Lookup",
+        "category": "Smart Class Lookup"
+      },
+      {
+        "command": "smartClassLookup.rebuildIndex",
+        "title": "Smart Class Lookup: Rebuild Index",
+        "category": "Smart Class Lookup"
+      }
+    ],
+    "configuration": {
+      "title": "Smart Class Lookup",
+      "properties": {
+        "smartClassLookup.include": {
+          "type": "string",
+          "default": "**/*.{ts,tsx,js,jsx}",
+          "description": "Glob pattern (relative to each workspace folder) for files to index."
+        },
+        "smartClassLookup.exclude": {
+          "type": "string",
+          "default": "**/{node_modules,.next,dist,build,coverage,.git,out}/**",
+          "description": "Glob pattern for files/folders to exclude from indexing."
+        },
+        "smartClassLookup.maxResults": {
+          "type": "number",
+          "default": 25,
+          "description": "Maximum number of ranked results to show in the Quick Pick."
+        },
+        "smartClassLookup.minScore": {
+          "type": "number",
+          "default": 0.15,
+          "description": "Minimum match score (0-1) a file must reach to be shown in results."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "typecheck": "tsc --noEmit -p ./",
+    "test": "npm run compile && node test/smoke.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.11.0",
+    "@types/babel__traverse": "^7.20.5",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.24.6",
+    "@babel/traverse": "^7.24.6"
+  }
+}
