@@ -41,6 +41,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       switch (data.type) {
         case "search": {
           const rawInput = data.value as string;
+          const textSearchEnabled = data.textSearchEnabled !== false;
           if (!rawInput.trim()) {
             webviewView.webview.postMessage({ type: "results", results: [] });
             return;
@@ -50,7 +51,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const minScore = cfg.get<number>("minScore", 0.15);
           const maxResults = cfg.get<number>("maxResults", 25);
 
-          const results = rankFiles(inputClasses, this.indexer.getIndex(), { minScore, maxResults, rawInput });
+          const results = rankFiles(inputClasses, this.indexer.getIndex(), {
+            minScore,
+            maxResults,
+            rawInput: textSearchEnabled ? rawInput : undefined
+          });
 
           // Map results to webview-friendly format (handling Set/Map serialization)
           const webviewResults = results.map((r) => {
@@ -434,7 +439,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           if (!searchInput.value.trim()) {
             searchInput.value = message.text;
             clearBtn.style.display = 'flex';
-            vscode.postMessage({ type: 'search', value: message.text });
+            vscode.postMessage({
+              type: 'search',
+              value: message.text,
+              textSearchEnabled: textSearchToggle.checked
+            });
           }
           break;
       }
