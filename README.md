@@ -28,13 +28,33 @@ Smart Class Lookup will.
 ## How it works
 
 1. **Run the command.** `Cmd/Ctrl+Shift+P` → **"Smart Class Lookup"**.
-2. **Paste your class list.** Order, spacing, and duplicates don't matter.
-3. **Pick a result.** Files are ranked by how many of the pasted classes they
-   contain (`matched / pasted`, e.g. 8 out of 9 pasted classes → **88%**).
-   Selecting a result opens the file and highlights the matching lines.
+2. **Paste your class list.** The input box is pre-filled from your clipboard
+   if it already contains a class list or HTML element (just press `Enter`).
+   You can also paste a full DevTools element like
+   `<div class="p-4 flex rounded-lg">` and the extension strips the HTML
+   wrapper automatically — only the class names are used.
+3. **Navigate the results.** As you arrow through the Quick Pick, the
+   matching file opens in a live preview tab with the matched lines
+   highlighted in real time. Press `Escape` to cancel and restore your
+   original editor.
+4. **Pick an occurrence.** Files with matches on multiple distinct lines are
+   expanded into separate entries — one per line — so you can jump to the
+   exact component occurrence in one click.
 
 A status bar item (bottom right) shows how many files are currently indexed
 and doubles as a shortcut to run the search.
+
+## Smart paste detection
+
+The input box accepts any of the following — no manual trimming required:
+
+| What you paste | What is used |
+|---|---|
+| `p-4 flex rounded-lg` | the whole string |
+| `<div class="p-4 flex">` | `p-4 flex` |
+| `class="p-4 flex"` | `p-4 flex` |
+| `className="p-4 flex"` | `p-4 flex` |
+| `` className={`p-4 flex`} `` | `p-4 flex` |
 
 ## Why AST, not regex
 
@@ -65,13 +85,18 @@ where they're textually written.
 
 ## Indexing & performance
 
-On activation, the extension scans the workspace once (default:
-`**/*.{ts,tsx,js,jsx}`, excluding `node_modules`, `.next`, `dist`, `build`,
-`coverage`, `.git`, `out`) and builds an in-memory index of
+On activation, the extension loads a **persisted index cache** from VS Code's
+workspace storage and compares file modification times. Only files that have
+changed since the last session are re-parsed, so large repos skip the full
+scan on every restart. The cache is invalidated automatically when the
+`include` or `exclude` settings change.
+
+When no cache exists (first run), the extension scans the workspace once
+(default: `**/*.{ts,tsx,js,jsx}`, excluding `node_modules`, `.next`, `dist`,
+`build`, `coverage`, `.git`, `out`) and builds an in-memory index of
 `class → file → locations`. After that, a `FileSystemWatcher` keeps the
-index current incrementally — only the file that changed gets re-parsed, so
-searches stay fast even on large repos. You can force a full rebuild with
-**"Smart Class Lookup: Rebuild Index"**.
+index current incrementally — only the file that changed gets re-parsed. You
+can force a full rebuild with **"Smart Class Lookup: Rebuild Index"**.
 
 ## Settings
 
@@ -86,14 +111,14 @@ searches stay fast even on large repos. You can force a full rebuild with
 
 ```
 src/
-  extension.ts     activation, command registration, status bar
-  astExtractor.ts   Babel AST walk: finds class strings + their locations
-  classParser.ts    tokenizes/dedupes the pasted DevTools string
-  indexer.ts        builds + incrementally maintains the workspace index
-  matcher.ts        order-independent similarity scoring & ranking
-  quickPick.ts      results UI, jump-to-file, match highlighting
+  extension.ts     activation, command registration, status bar, clipboard pre-fill
+  astExtractor.ts  Babel AST walk: finds class strings + their locations
+  classParser.ts   tokenizes/dedupes the pasted string; strips HTML/JSX wrappers
+  indexer.ts       builds + incrementally maintains the workspace index; persists cache
+  matcher.ts       order-independent similarity scoring & ranking
+  quickPick.ts     results UI: live preview, multi-location items, jump-to-file
 test/
-  smoke.js          functional tests for the extractor + matcher (no vscode dep)
+  smoke.js         functional tests for the extractor, parser, and matcher (no vscode dep)
 ```
 
 ## Developing
@@ -101,7 +126,7 @@ test/
 ```bash
 npm install
 npm run test        # compiles + runs the extractor/matcher smoke tests
-npm run watch        # tsc --watch, for use with the Extension Development Host
+npm run watch       # tsc --watch, for use with the Extension Development Host
 ```
 
 To try it in VS Code: open this folder, press `F5` to launch an Extension
@@ -113,7 +138,7 @@ Palette.
 
 - Resolve simple local variable assignments (`const styles = cn(...)`) one
   hop, for the common "computed once, spread via `{...styles}`" pattern.
-- Persist the index to disk (e.g. `.vscode/`) so huge monorepos skip the
-  initial full scan on every VS Code restart.
 - Add a "copy matched file path" / "copy className" action to each Quick
   Pick item.
+- Support `.vue`, `.svelte`, and `.html` files via a regex-based fallback
+  extractor for `class="..."` attributes.

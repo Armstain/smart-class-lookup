@@ -2,7 +2,7 @@
 // Doesn't touch vscode at all, so it can run with plain node + ts-node-less
 // compiled JS in isolation.
 const { extractClassesFromSource } = require("../out/astExtractor");
-const { parsePastedClassList } = require("../out/classParser");
+const { parsePastedClassList, extractClassesFromPaste } = require("../out/classParser");
 const { scoreFile } = require("../out/matcher");
 
 function buildEntryFromSource(source, file) {
@@ -107,4 +107,32 @@ const reordered = parsePastedClassList(
 const result2 = scoreFile(reordered, partialEntry);
 assert(result2.score === result.score, "order of the pasted class list does not affect the score");
 
-console.log("\\nDone.");
+// --- Test 6: extractClassesFromPaste — smart HTML/JSX strip ---
+assert(
+  extractClassesFromPaste("p-4 flex rounded-lg") === "p-4 flex rounded-lg",
+  "plain class list passes through unchanged"
+);
+assert(
+  extractClassesFromPaste('<div class="p-4 flex rounded-lg">') === "p-4 flex rounded-lg",
+  "full HTML element: extracts class value"
+);
+assert(
+  extractClassesFromPaste('class="p-4 flex rounded-lg"') === "p-4 flex rounded-lg",
+  "bare class= attribute: extracts value"
+);
+assert(
+  extractClassesFromPaste("className=\"p-4 flex rounded-lg\"") === "p-4 flex rounded-lg",
+  "className= attribute: extracts value"
+);
+assert(
+  extractClassesFromPaste("className={`p-4 flex rounded-lg`}") === "p-4 flex rounded-lg",
+  "className={`...`} template literal form: extracts value"
+);
+// parsePastedClassList should work end-to-end with HTML input
+const fromHtml = parsePastedClassList('<div class="relative z-[1050] bg-base-200">');
+assert(
+  fromHtml.length === 3 && fromHtml[0] === "relative" && fromHtml[2] === "bg-base-200",
+  `parsePastedClassList strips HTML and tokenizes (got [${fromHtml.join(", ")}])`
+);
+
+console.log("\nDone.");
