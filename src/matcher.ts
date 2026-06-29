@@ -31,6 +31,27 @@ export function scoreFile(
     .flatMap((cls) => entry.locations.get(cls) ?? [])
     .slice(0, MAX_LOCATIONS_PER_RESULT);
 
+  // Group matched classes by line number to find the maximum matches on any single line
+  const lineToMatches = new Map<number, Set<string>>();
+  for (const cls of matchedClasses) {
+    const locs = entry.locations.get(cls) ?? [];
+    for (const loc of locs) {
+      let set = lineToMatches.get(loc.line);
+      if (!set) {
+        set = new Set();
+        lineToMatches.set(loc.line, set);
+      }
+      set.add(cls);
+    }
+  }
+
+  let maxLineMatches = 0;
+  for (const matchSet of lineToMatches.values()) {
+    if (matchSet.size > maxLineMatches) {
+      maxLineMatches = matchSet.size;
+    }
+  }
+
   return {
     file: entry.file,
     matchedCount: matchedClasses.length,
@@ -39,6 +60,7 @@ export function scoreFile(
     matchedClasses,
     unmatchedClasses,
     locations,
+    maxLineMatches,
   };
 }
 
@@ -58,6 +80,7 @@ export function rankFiles(
   }
 
   results.sort((a, b) => {
+    if (b.maxLineMatches !== a.maxLineMatches) return b.maxLineMatches - a.maxLineMatches;
     if (b.score !== a.score) return b.score - a.score;
     if (b.matchedCount !== a.matchedCount) return b.matchedCount - a.matchedCount;
     return a.file.localeCompare(b.file);

@@ -20,4 +20,5 @@ export interface SearchResult {
   matchedClasses: string[];
   unmatchedClasses: string[];
   locations: ClassLocation[];
+  maxLineMatches: number;
 }

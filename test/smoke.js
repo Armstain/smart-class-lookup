@@ -98,6 +98,7 @@ const partialEntry = buildEntryFromSource(partialSrc, "/proj/Partial.tsx");
 const result = scoreFile(pasted, partialEntry);
 assert(result !== null, "scoreFile returns a result for a partial match");
 assert(result.matchedCount === 8, `matchedCount is 8 (got ${result.matchedCount})`);
+assert(result.maxLineMatches === 8, `maxLineMatches is 8 (got ${result.maxLineMatches})`);
 assert(Math.abs(result.score - 8 / 9) < 1e-9, `score is 8/9 ≈ 0.888 (got ${result.score})`);
 
 // Reordered identical pasted list should score the SAME against the same file.
