@@ -50,7 +50,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const minScore = cfg.get<number>("minScore", 0.15);
           const maxResults = cfg.get<number>("maxResults", 25);
 
-          const results = rankFiles(inputClasses, this.indexer.getIndex(), { minScore, maxResults });
+          const results = rankFiles(inputClasses, this.indexer.getIndex(), { minScore, maxResults, rawInput });
 
           // Map results to webview-friendly format (handling Set/Map serialization)
           const webviewResults = results.map((r) => {
@@ -350,10 +350,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // Request clipboard content on startup/focus
     vscode.postMessage({ type: 'readClipboard' });
 
+    let debounceTimer;
     searchInput.addEventListener('input', (e) => {
       const val = e.target.value;
       clearBtn.style.display = val ? 'flex' : 'none';
-      vscode.postMessage({ type: 'search', value: val });
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        vscode.postMessage({ type: 'search', value: val });
+      }, 100);
     });
 
     clearBtn.addEventListener('click', () => {

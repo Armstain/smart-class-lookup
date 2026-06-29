@@ -10,6 +10,7 @@ export interface FileIndexEntry {
   classes: Set<string>;
   locations: Map<string, ClassLocation[]>;
   mtimeMs: number;
+  source?: string;
 }
 
 export interface SearchResult {

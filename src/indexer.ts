@@ -203,7 +203,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
     }
 
     this.removeFile(filePath);
-    this.addEntryToIndex(filePath, { file: filePath, classes: classSet, locations, mtimeMs });
+    this.addEntryToIndex(filePath, { file: filePath, classes: classSet, locations, mtimeMs, source });
   }
 
   private removeFile(filePath: string): void {

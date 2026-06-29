@@ -3,7 +3,7 @@
 // compiled JS in isolation.
 const { extractClassesFromSource } = require("../out/astExtractor");
 const { parsePastedClassList, extractClassesFromPaste } = require("../out/classParser");
-const { scoreFile } = require("../out/matcher");
+const { scoreFile, searchTextInFile, rankFiles } = require("../out/matcher");
 
 function buildEntryFromSource(source, file) {
   const { classes, parseError } = extractClassesFromSource(source, file);
@@ -16,7 +16,7 @@ function buildEntryFromSource(source, file) {
     list.push(location);
     locations.set(className, list);
   }
-  return { file, classes: classSet, locations, mtimeMs: Date.now() };
+  return { file, classes: classSet, locations, mtimeMs: Date.now(), source };
 }
 
 function assert(cond, msg) {
@@ -165,6 +165,31 @@ assert(
   fromDot.length === 1 && fromDot[0] === "bg-red-500",
   `parsePastedClassList extracts classes from CSS selectors (got [${fromDot.join(", ")}])`
 );
+
+
+// --- Test 8: Substring text search verification ---
+const srcText = `
+function MyCustomButton() {
+  const handleClick = () => console.log("clicked flatpickr-btn");
+  return <button className="p-4" onClick={handleClick}>Click Me</button>;
+}
+`;
+const textEntry = buildEntryFromSource(srcText, "/proj/Button.tsx");
+
+// 1. Verify text search locates substring
+const textResult = searchTextInFile("flatpickr-btn", textEntry);
+assert(textResult !== null, "searchTextInFile finds substring match");
+assert(textResult.matchedCount === 1, `matchedCount for text search is 1 (got ${textResult.matchedCount})`);
+assert(textResult.locations[0].line === 2, `located line is 2 (got ${textResult.locations[0].line})`);
+
+// 2. Verify rankFiles merges class results and text results
+const indexMap = new Map([
+  ["/proj/Button.tsx", textEntry]
+]);
+const ranked = rankFiles(["p-4"], indexMap, { rawInput: "flatpickr-btn" });
+assert(ranked.length === 1, "rankFiles returns the file");
+assert(ranked[0].score === 1.0, `score boosted to 1.0 (got ${ranked[0].score})`);
+assert(ranked[0].locations.length === 2, `locations merged (got ${ranked[0].locations.length})`);
 
 
 console.log("\nDone.");
