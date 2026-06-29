@@ -23,6 +23,24 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "smart-class-lookup-sidebar",
+          "title": "Smart Class Lookup",
+          "icon": "resources/search.svg"
+        }
+      ]
+    },
+    "views": {
+      "smart-class-lookup-sidebar": [
+        {
+          "type": "webview",
+          "id": "smartClassLookup.sidebarView",
+          "name": "Class Lookup"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "smartClassLookup.search",

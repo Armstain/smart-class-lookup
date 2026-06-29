@@ -162,11 +162,11 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
 // Helpers
 // ---------------------------------------------------------------------------
 
-function clearDecorations(editor: vscode.TextEditor | undefined): void {
+export function clearDecorations(editor: vscode.TextEditor | undefined): void {
   editor?.setDecorations(highlightDecorationType, []);
 }
 
-async function openAndHighlight(
+export async function openAndHighlight(
   result: SearchResult,
   locationIndex: number,
   preview: boolean

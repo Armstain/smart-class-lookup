@@ -8,6 +8,7 @@ import { WorkspaceIndexer } from "./indexer";
 import { parsePastedClassList, extractClassesFromPaste } from "./classParser";
 import { rankFiles } from "./matcher";
 import { showResultsQuickPick } from "./quickPick";
+import { SidebarProvider } from "./sidebarProvider";
 
 let indexer: WorkspaceIndexer | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
@@ -18,6 +19,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
   indexer = new WorkspaceIndexer(output, context);
   context.subscriptions.push(indexer);
+
+  const sidebarProvider = new SidebarProvider(context.extensionUri, indexer);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("smartClassLookup.sidebarView", sidebarProvider)
+  );
 
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
   statusBarItem.command = "smartClassLookup.search";
