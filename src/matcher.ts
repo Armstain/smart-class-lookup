@@ -1,22 +1,7 @@
-/**
- * Scoring logic: given the set of classes the user pasted and the set of
- * classes found in a given file, compute a similarity score.
- *
- * Order never matters -- both sides are treated as sets. The score is
- * defined as (matched classes) / (total pasted classes), which matches the
- * spec exactly: pasting 9 classes and finding 8 of them in a file scores
- * 8/9 ≈ 88%, regardless of what order either side lists its classes in.
- */
-
 import type { FileIndexEntry, SearchResult } from "./types";
 
 const MAX_LOCATIONS_PER_RESULT = 12;
 
-/**
- * Score a single file against the pasted (and already deduplicated) input
- * class list. Returns `null` if there is no overlap at all, so callers can
- * cheaply filter out files with zero relevance.
- */
 export function scoreFile(
   inputClasses: string[],
   entry: FileIndexEntry
@@ -57,11 +42,6 @@ export function scoreFile(
   };
 }
 
-/**
- * Score every file in the index against the pasted class list and return
- * results sorted highest-score-first. Ties are broken by raw matched count,
- * then alphabetically by file path for stable, predictable ordering.
- */
 export function rankFiles(
   inputClasses: string[],
   index: Map<string, FileIndexEntry>,

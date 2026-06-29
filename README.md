@@ -1,13 +1,15 @@
 # Smart Class Lookup
 
 Copy a class list out of Chrome DevTools, paste it into one command, and jump
-straight to the component that renders it — even when your codebase spreads
+straight to the component that renders it - even when your codebase spreads
 those classes across `cn()`, `clsx()`, `classnames()`, template literals,
 arrays, ternaries, and `&&` conditionals.
 
 ```html
 <!-- copied from DevTools -->
-<div class="relative z-[1050] bg-base-200 px-5 pb-5 pt-4 rounded-2xl shadow-md mb-12">
+<div
+  class="relative z-[1050] bg-base-200 px-5 pb-5 pt-4 rounded-2xl shadow-md mb-12"
+></div>
 ```
 
 ```tsx
@@ -32,13 +34,13 @@ Smart Class Lookup will.
    if it already contains a class list or HTML element (just press `Enter`).
    You can also paste a full DevTools element like
    `<div class="p-4 flex rounded-lg">` and the extension strips the HTML
-   wrapper automatically — only the class names are used.
+   wrapper automatically - only the class names are used.
 3. **Navigate the results.** As you arrow through the Quick Pick, the
    matching file opens in a live preview tab with the matched lines
    highlighted in real time. Press `Escape` to cancel and restore your
    original editor.
 4. **Pick an occurrence.** Files with matches on multiple distinct lines are
-   expanded into separate entries — one per line — so you can jump to the
+   expanded into separate entries - one per line - so you can jump to the
    exact component occurrence in one click.
 
 A status bar item (bottom right) shows how many files are currently indexed
@@ -46,15 +48,15 @@ and doubles as a shortcut to run the search.
 
 ## Smart paste detection
 
-The input box accepts any of the following — no manual trimming required:
+The input box accepts any of the following - no manual trimming required:
 
-| What you paste | What is used |
-|---|---|
-| `p-4 flex rounded-lg` | the whole string |
-| `<div class="p-4 flex">` | `p-4 flex` |
-| `class="p-4 flex"` | `p-4 flex` |
-| `className="p-4 flex"` | `p-4 flex` |
-| `` className={`p-4 flex`} `` | `p-4 flex` |
+| What you paste             | What is used     |
+| -------------------------- | ---------------- |
+| `p-4 flex rounded-lg`      | the whole string |
+| `<div class="p-4 flex">`   | `p-4 flex`       |
+| `class="p-4 flex"`         | `p-4 flex`       |
+| `className="p-4 flex"`     | `p-4 flex`       |
+| ``className={`p-4 flex`}`` | `p-4 flex`       |
 
 ## Supported Syntax & Patterns
 
@@ -72,7 +74,6 @@ The extension statically analyzes your files to extract class names from complex
 > [!NOTE]
 > **Limitation:** Since this uses static analysis, classes defined in a separate file/variable and referenced by name (e.g., `className={styles}`) cannot be resolved.
 
-
 ## Indexing & performance
 
 On activation, the extension loads a **persisted index cache** from VS Code's
@@ -85,17 +86,17 @@ When no cache exists (first run), the extension scans the workspace once
 (default: `**/*.{ts,tsx,js,jsx}`, excluding `node_modules`, `.next`, `dist`,
 `build`, `coverage`, `.git`, `out`) and builds an in-memory index of
 `class → file → locations`. After that, a `FileSystemWatcher` keeps the
-index current incrementally — only the file that changed gets re-parsed. You
+index current incrementally - only the file that changed gets re-parsed. You
 can force a full rebuild with **"Smart Class Lookup: Rebuild Index"**.
 
 ## Settings
 
-| Setting | Default | Description |
-| --- | --- | --- |
-| `smartClassLookup.include` | `**/*.{ts,tsx,js,jsx}` | Files to index |
-| `smartClassLookup.exclude` | `**/{node_modules,.next,dist,build,coverage,.git,out}/**` | Files/folders to skip |
-| `smartClassLookup.minScore` | `0.15` | Minimum match score (0–1) to show a result |
-| `smartClassLookup.maxResults` | `25` | Max number of ranked results shown |
+| Setting                       | Default                                                   | Description                                |
+| ----------------------------- | --------------------------------------------------------- | ------------------------------------------ |
+| `smartClassLookup.include`    | `**/*.{ts,tsx,js,jsx}`                                    | Files to index                             |
+| `smartClassLookup.exclude`    | `**/{node_modules,.next,dist,build,coverage,.git,out}/**` | Files/folders to skip                      |
+| `smartClassLookup.minScore`   | `0.15`                                                    | Minimum match score (0–1) to show a result |
+| `smartClassLookup.maxResults` | `25`                                                      | Max number of ranked results shown         |
 
 ## Project layout
 

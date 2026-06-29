@@ -1,22 +1,3 @@
-/**
- * Builds and maintains an in-memory index of:
- *
- *   class name -> file -> [locations]
- *
- * (modeled here as `file -> FileIndexEntry { classes, locations }`, with a
- * secondary `classToFiles` map for fast candidate lookup).
- *
- * The initial build scans the whole workspace once. After that, a
- * FileSystemWatcher keeps the index up to date incrementally -- only the
- * file that actually changed gets re-parsed, so subsequent searches stay
- * "nearly instant" even in large repos.
- *
- * Index cache: after each full build the index is serialized into VS Code's
- * workspaceState storage. On the next activation only files whose on-disk
- * mtime changed since the last run are re-parsed, so large repos skip the
- * full scan on every restart.
- */
-
 import * as path from "path";
 import * as vscode from "vscode";
 import { extractClassesFromSource } from "./astExtractor";
@@ -47,7 +28,6 @@ export class WorkspaceIndexer implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
 
   private readonly onDidUpdateEmitter = new vscode.EventEmitter<void>();
-  /** Fires whenever the index finishes an (re)build, so the UI can refresh status. */
   public readonly onDidUpdate = this.onDidUpdateEmitter.event;
 
   private building: Promise<void> | undefined;
@@ -67,7 +47,6 @@ export class WorkspaceIndexer implements vscode.Disposable {
     };
   }
 
-  /** Full workspace scan. Safe to call multiple times (e.g. manual rebuild). */
   public async buildFullIndex(): Promise<void> {
     if (this.building) {
       return this.building;
@@ -84,12 +63,10 @@ export class WorkspaceIndexer implements vscode.Disposable {
     const start = Date.now();
     const { include, exclude } = this.getConfig();
 
-    // Load cache and check if config matches.
     const cache = this.context.workspaceState.get<IndexCache>(CACHE_KEY);
     const cacheValid = cache && cache.include === include && cache.exclude === exclude;
 
     if (cacheValid) {
-      // Warm the index from cache first (instant).
       this.index.clear();
       this.classToFiles.clear();
       for (const entry of cache.entries) {
@@ -106,11 +83,9 @@ export class WorkspaceIndexer implements vscode.Disposable {
       this.classToFiles.clear();
     }
 
-    // Find all workspace files matching the glob.
     const uris = await vscode.workspace.findFiles(include, exclude);
     this.output.appendLine(`[index] scanning ${uris.length} files (incremental: ${cacheValid ? "yes" : "no"})...`);
 
-    // Parse only files that are new or changed since the last cache build.
     const CONCURRENCY = 16;
     let cursor = 0;
 
@@ -120,18 +95,16 @@ export class WorkspaceIndexer implements vscode.Disposable {
         const filePath = uri.fsPath;
 
         if (cacheValid) {
-          // Stat the file to get its real mtime.
           let stat: vscode.FileStat;
           try {
             stat = await vscode.workspace.fs.stat(uri);
           } catch {
-            // File disappeared — remove from index.
             this.removeFile(filePath);
             continue;
           }
           const cached = this.index.get(filePath);
           if (cached && cached.mtimeMs >= stat.mtime) {
-            continue; // cache hit — skip re-parse
+            continue;
           }
         }
 
@@ -141,7 +114,6 @@ export class WorkspaceIndexer implements vscode.Disposable {
 
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, uris.length || 1) }, worker));
 
-    // Remove cached entries for files that no longer exist.
     const uriSet = new Set(uris.map((u) => u.fsPath));
     for (const filePath of this.index.keys()) {
       if (!uriSet.has(filePath)) {
@@ -155,13 +127,11 @@ export class WorkspaceIndexer implements vscode.Disposable {
       `[index] built index for ${this.fileCount} files with classes in ${this.lastBuildMs}ms`
     );
 
-    // Persist the updated index to workspace state.
     await this.saveCache(include, exclude);
 
     this.onDidUpdateEmitter.fire();
   }
 
-  /** Serialize the current index to workspaceState. */
   private async saveCache(include: string, exclude: string): Promise<void> {
     const entries: CachedEntry[] = [];
     for (const entry of this.index.values()) {
@@ -176,7 +146,6 @@ export class WorkspaceIndexer implements vscode.Disposable {
     await this.context.workspaceState.update(CACHE_KEY, cache);
   }
 
-  /** Add a fully-built FileIndexEntry into both maps. */
   private addEntryToIndex(filePath: string, entry: FileIndexEntry): void {
     this.index.set(filePath, entry);
     for (const cls of entry.classes) {
@@ -189,7 +158,6 @@ export class WorkspaceIndexer implements vscode.Disposable {
     }
   }
 
-  /** (Re)parse a single file and merge it into the index. */
   private async indexFile(uri: vscode.Uri): Promise<void> {
     let bytes: Uint8Array;
     try {
@@ -203,8 +171,6 @@ export class WorkspaceIndexer implements vscode.Disposable {
     const { classes, parseError } = extractClassesFromSource(source, filePath);
 
     if (parseError) {
-      // Don't fail the whole index over one unparsable file (e.g. a file
-      // using bleeding-edge syntax our plugin set doesn't cover).
       this.output.appendLine(`[index] skipped ${filePath}: ${parseError}`);
       this.removeFile(filePath);
       return;
@@ -228,16 +194,14 @@ export class WorkspaceIndexer implements vscode.Disposable {
       }
     }
 
-    // Get the real mtime so the cache can detect future changes correctly.
     let mtimeMs = Date.now();
     try {
       const stat = await vscode.workspace.fs.stat(uri);
       mtimeMs = stat.mtime;
     } catch {
-      // ignore — fall back to Date.now()
+      // fall back to Date.now()
     }
 
-    // Remove stale reverse-index entries from any previous version of this file.
     this.removeFile(filePath);
     this.addEntryToIndex(filePath, { file: filePath, classes: classSet, locations, mtimeMs });
   }
@@ -255,7 +219,6 @@ export class WorkspaceIndexer implements vscode.Disposable {
     this.index.delete(filePath);
   }
 
-  /** Start watching the workspace for changes and keep the index in sync. */
   public startWatching(): void {
     const { include } = this.getConfig();
     this.watcher = vscode.workspace.createFileSystemWatcher(include);
@@ -287,16 +250,12 @@ export class WorkspaceIndexer implements vscode.Disposable {
     await this.indexFile(uri);
     this.fileCount = this.index.size;
     this.onDidUpdateEmitter.fire();
-    // Update the cache incrementally after each file change.
     const { include, exclude } = this.getConfig();
     await this.saveCache(include, exclude);
   }
 
   private isExcluded(filePath: string): boolean {
     const { exclude } = this.getConfig();
-    // ponytail: cheap practical check covers common excluded directory names
-    // without pulling in a glob dependency. Ceiling: won't handle complex
-    // negation patterns; upgrade path is to add micromatch.
     const excludedDirs = exclude.match(/\{([^}]+)\}/)?.[1]?.split(",") ?? [];
     return excludedDirs.some((dir) => filePath.includes(`${path.sep}${dir}${path.sep}`));
   }

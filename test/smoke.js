@@ -128,11 +128,42 @@ assert(
   extractClassesFromPaste("className={`p-4 flex rounded-lg`}") === "p-4 flex rounded-lg",
   "className={`...`} template literal form: extracts value"
 );
-// parsePastedClassList should work end-to-end with HTML input
-const fromHtml = parsePastedClassList('<div class="relative z-[1050] bg-base-200">');
 assert(
-  fromHtml.length === 3 && fromHtml[0] === "relative" && fromHtml[2] === "bg-base-200",
-  `parsePastedClassList strips HTML and tokenizes (got [${fromHtml.join(", ")}])`
+  extractClassesFromPaste('className={"p-4 flex rounded-lg"}') === "p-4 flex rounded-lg",
+  "className={\"...\"} expression container form: extracts value"
 );
+assert(
+  extractClassesFromPaste('  className={  "p-4 flex rounded-lg"  }') === "p-4 flex rounded-lg",
+  "className={  \"...\"  } expression container form with extra spaces: extracts value"
+);
+assert(
+  extractClassesFromPaste('  className={  `p-4 flex rounded-lg`  }') === "p-4 flex rounded-lg",
+  "className={  `...`  } template literal form with extra spaces: extracts value"
+);
+// --- Test 7: parsePastedClassList token cleaning ---
+const fromCnCall = parsePastedClassList('const classes = cn("p-4", isOpen && "bg-red-500", "text-white");');
+assert(
+  fromCnCall.includes("p-4") && fromCnCall.includes("bg-red-500") && fromCnCall.includes("text-white"),
+  `parsePastedClassList extracts classes from cn helper call (got [${fromCnCall.join(", ")}])`
+);
+
+const fromTernary = parsePastedClassList('className={isActive ? "bg-red-500" : "bg-blue-500"}');
+assert(
+  fromTernary.includes("bg-red-500") && fromTernary.includes("bg-blue-500"),
+  `parsePastedClassList extracts classes from JSX ternary (got [${fromTernary.join(", ")}])`
+);
+
+const fromArray = parsePastedClassList('["p-4", "flex", "items-center"]');
+assert(
+  fromArray.length === 3 && fromArray[0] === "p-4" && fromArray[1] === "flex" && fromArray[2] === "items-center",
+  `parsePastedClassList extracts classes from JS array syntax (got [${fromArray.join(", ")}])`
+);
+
+const fromDot = parsePastedClassList('.bg-red-500');
+assert(
+  fromDot.length === 1 && fromDot[0] === "bg-red-500",
+  `parsePastedClassList extracts classes from CSS selectors (got [${fromDot.join(", ")}])`
+);
+
 
 console.log("\nDone.");

@@ -1,8 +1,3 @@
-/**
- * Extension entry point: registers commands, owns the workspace index, and
- * wires the input box -> matcher -> Quick Pick flow together.
- */
-
 import * as vscode from "vscode";
 import { WorkspaceIndexer } from "./indexer";
 import { parsePastedClassList, extractClassesFromPaste } from "./classParser";
@@ -33,7 +28,6 @@ export function activate(context: vscode.ExtensionContext): void {
     indexer.onDidUpdate(() => updateStatusBar())
   );
 
-  // Kick off the initial index build in the background; don't block activation.
   void indexer.buildFullIndex().then(() => indexer?.startWatching());
   updateStatusBar(true);
   statusBarItem.show();
@@ -59,15 +53,10 @@ function updateStatusBar(building = false): void {
   statusBarItem.tooltip = "Click to run Smart Class Lookup";
 }
 
-/** Returns true if the clipboard text looks like it contains CSS class names. */
 function looksLikeClassInput(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
-  // Contains a class= or className= attribute — definitely a DevTools/JSX paste.
   if (/\bclass(?:Name)?\s*=/i.test(trimmed)) return true;
-  // Looks like a plain class list: tokens composed of chars typical in
-  // Tailwind class names, separated by spaces. Reject if it contains
-  // semicolons, braces, or parens (likely code).
   if (/[{};()=<>]/.test(trimmed)) return false;
   return /^[a-zA-Z0-9!\-:[\]_./\s]+$/.test(trimmed) && trimmed.split(/\s+/).length >= 2;
 }
@@ -75,7 +64,6 @@ function looksLikeClassInput(text: string): boolean {
 async function runSearchCommand(): Promise<void> {
   if (!indexer) return;
 
-  // Pre-fill the input box from clipboard if it looks relevant.
   let prefill = "";
   try {
     const clip = await vscode.env.clipboard.readText();

@@ -1,16 +1,3 @@
-/**
- * Renders search results in a Quick Pick, and handles jumping to + briefly
- * highlighting the matched classes when the user picks a result.
- *
- * UI behaviour:
- *  - Arrow-key navigation opens a live file preview and highlights matched
- *    lines in real time; dismissing without selection restores the original
- *    editor.
- *  - Results with matches on multiple distinct lines are expanded: each
- *    occurrence is shown as a separate item so the user can jump directly to
- *    the exact spot in one click.
- */
-
 import * as path from "path";
 import * as vscode from "vscode";
 import type { SearchResult } from "./types";
@@ -33,7 +20,6 @@ function formatPercent(score: number): string {
 interface FileItem extends vscode.QuickPickItem {
   itemType: "file";
   result: SearchResult;
-  /** The location index this item should jump to (first location by default). */
   locationIndex: number;
 }
 
@@ -45,7 +31,6 @@ interface LocationItem extends vscode.QuickPickItem {
 
 type Item = FileItem | LocationItem;
 
-/** Build the flat list of Quick Pick items for a single SearchResult. */
 function buildItems(result: SearchResult, workspaceRoot: string | undefined): Item[] {
   const relativePath = workspaceRoot
     ? path.relative(workspaceRoot, result.file)
@@ -54,7 +39,6 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
   const matchedPreview = result.matchedClasses.slice(0, 8).join(" ");
   const overflow = result.matchedClasses.length > 8 ? " …" : "";
 
-  // Deduplicate locations by line so we don't create 8 items for the same line.
   const seenLines = new Set<number>();
   const dedupedLocations = result.locations.filter((loc) => {
     if (seenLines.has(loc.line)) return false;
@@ -71,13 +55,10 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
     detail: `${relativePath}  —  ${matchedPreview}${overflow}`,
   };
 
-  // If there's only one distinct match line, just show the file item.
   if (dedupedLocations.length <= 1) {
     return [fileItem];
   }
 
-  // More than one distinct location: add a sub-item per line so the user can
-  // pick the exact occurrence they want.
   const locationItems: LocationItem[] = dedupedLocations.map((loc, i) => ({
     itemType: "location",
     result,
@@ -94,7 +75,6 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
 // Main entry point
 // ---------------------------------------------------------------------------
 
-/** Show the ranked results and, if the user picks one, open + highlight it. */
 export async function showResultsQuickPick(results: SearchResult[]): Promise<void> {
   if (results.length === 0) {
     vscode.window.showInformationMessage(
@@ -106,8 +86,6 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const items: Item[] = results.flatMap((r) => buildItems(r, workspaceRoot));
 
-  // Remember the editor the user was in before opening the Quick Pick, so we
-  // can restore it if they dismiss without selecting.
   const originalEditor = vscode.window.activeTextEditor;
   let previewEditor: vscode.TextEditor | undefined;
 
@@ -120,7 +98,6 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
 
   const subs: vscode.Disposable[] = [];
 
-  // Live preview: open the file and highlight matches as the user arrows through.
   subs.push(
     qp.onDidChangeActive(async (activeItems) => {
       const active = activeItems[0];
@@ -129,7 +106,6 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
     })
   );
 
-  // Selection: open the file non-preview, leave highlights up, then clear after 4s.
   const picked = await new Promise<Item | undefined>((resolve) => {
     subs.push(
       qp.onDidAccept(() => resolve(qp.activeItems[0])),
@@ -142,7 +118,6 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
   for (const s of subs) s.dispose();
 
   if (!picked) {
-    // User dismissed — restore the original editor.
     clearDecorations(previewEditor);
     if (originalEditor) {
       await vscode.window.showTextDocument(originalEditor.document, {
@@ -154,7 +129,6 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
     return;
   }
 
-  // Open the picked file non-preview and keep highlights for 4s.
   await openAndHighlight(picked.result, picked.locationIndex, false);
 }
 
@@ -185,8 +159,6 @@ export async function openAndHighlight(
     vscode.TextEditorRevealType.InCenter
   );
 
-  // Highlight every matched location's line so the user can see at a glance
-  // which lines contain matched classes.
   const seenLines = new Set<number>();
   const ranges = result.locations
     .filter((loc) => {
@@ -202,7 +174,6 @@ export async function openAndHighlight(
   editor.setDecorations(highlightDecorationType, ranges);
 
   if (!preview) {
-    // Clear the highlight after a few seconds, or as soon as the user moves on.
     const clear = () => editor.setDecorations(highlightDecorationType, []);
     const timeout = setTimeout(clear, 4000);
     const sub = vscode.window.onDidChangeActiveTextEditor(() => {
