@@ -56,32 +56,22 @@ The input box accepts any of the following — no manual trimming required:
 | `className="p-4 flex"` | `p-4 flex` |
 | `` className={`p-4 flex`} `` | `p-4 flex` |
 
-## Why AST, not regex
+## Supported Syntax & Patterns
 
-Regex can find `className="foo bar"`, but it falls apart the moment a class
-is built up programmatically. This extension parses every file into a real
-AST (via `@babel/parser` + `@babel/traverse`) and recursively resolves class
-strings out of:
+The extension statically analyzes your files to extract class names from complex, programmatic code structures:
 
-- `className="..."`, `className='...'`, `className={...}`
-- `cn(...)`, `clsx(...)`, `classnames(...)`, `cx(...)`, `twMerge(...)`,
-  including nested calls like `cn(clsx(...), ...)`
-- Template literals, including `${...}` interpolations:
-  `` `bg-white ${isOpen ? "shadow-md" : ""}` ``
-- Ternaries: `condition ? "bg-red-500" : "bg-blue-500"`
-- `&&` / `||` conditionals: `isOpen && "rounded-lg"`
-- Arrays: `["p-4", isOpen && "rounded-lg"]`, including standalone arrays not
-  passed into a helper at all
-- `clsx`'s object form: `clsx({ "bg-red-500": isError })`
-- Arbitrary values (`w-[320px]`, `z-[1050]`), variants (`hover:`, `md:`,
-  `dark:`), and important (`!mt-4`) — these all survive as single
-  whitespace-delimited tokens, so no special-casing is needed.
+- **Standard classes**: `className="foo bar"` or `className={'foo bar'}`
+- **Utility functions**: `cn(...)`, `clsx(...)`, `classnames(...)`, `cx(...)`, `twMerge(...)` (including nested calls)
+- **Template literals**: Interpolated strings like `` `bg-white ${isOpen ? "shadow-md" : ""}` ``
+- **Ternary operators**: `condition ? "bg-red-500" : "bg-blue-500"`
+- **Logical conditions**: `isOpen && "rounded-lg"`
+- **Arrays**: `["p-4", isOpen && "rounded-lg"]`
+- **Object notation**: `clsx({ "bg-red-500": isError })`
+- **Tailwind features**: Arbitrary values (`w-[320px]`), variants (`hover:`, `md:`), and important flags (`!mt-4`)
 
-**Known limitation:** this is static analysis, not a type-checker. If a class
-list is computed in one file and only *referenced* by variable name in
-another (`const styles = cn(...)` in file A, `className={styles}` in file
-B), the extension can't trace that data flow and will only find the classes
-where they're textually written.
+> [!NOTE]
+> **Limitation:** Since this uses static analysis, classes defined in a separate file/variable and referenced by name (e.g., `className={styles}`) cannot be resolved.
+
 
 ## Indexing & performance
 

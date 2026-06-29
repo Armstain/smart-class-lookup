@@ -3,7 +3,12 @@
   "displayName": "Smart Class Lookup",
   "description": "Paste a class list copied from DevTools and find the matching component anywhere in your workspace — even when classes are split across cn(), clsx(), classnames(), template literals, arrays, ternaries, and conditionals.",
   "version": "0.1.0",
-  "publisher": "local-dev",
+  "publisher": "Adnan",
+  "icon": "resources/logo.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Armstain/smart-class-lookup"
+  },
   "private": true,
   "engines": {
     "vscode": "^1.85.0"
