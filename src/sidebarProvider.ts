@@ -14,7 +14,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     private readonly extensionUri: vscode.Uri,
     private readonly indexer: WorkspaceIndexer
   ) {
-    // Re-trigger search when index is updated in background
     this.indexer.onDidUpdate(() => {
       if (this.view) {
         this.view.webview.postMessage({ type: "indexUpdated", fileCount: this.indexer.fileCount });
@@ -129,14 +128,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               }
             }
           } catch {
-            // ignore
+            
           }
           break;
         }
       }
     });
 
-    // Check clipboard when view becomes visible
     webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
         webviewView.webview.postMessage({ type: "viewVisible", fileCount: this.indexer.fileCount });
@@ -413,10 +411,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     let currentFileCount = 0;
 
-    // Request clipboard content on startup/focus
     vscode.postMessage({ type: 'readClipboard' });
 
-    // Re-trigger search when toggle is changed
     textSearchToggle.addEventListener('change', () => {
       vscode.postMessage({
         type: 'search',
@@ -425,7 +421,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       });
     });
 
-    // Sync hover preview toggle with config
     hoverPreviewToggle.addEventListener('change', () => {
       vscode.postMessage({ type: 'togglePreview', enabled: hoverPreviewToggle.checked });
     });
@@ -471,7 +466,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           hoverPreviewToggle.checked = message.enabled;
           break;
         case 'clipboardText':
-          // Auto fill if the input is currently empty
           if (!searchInput.value.trim()) {
             searchInput.value = message.text;
             clearBtn.style.display = 'flex';
@@ -521,7 +515,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         item.appendChild(header);
         item.appendChild(path);
 
-        // Show missing/unmatched classes if the match is partial
         if (res.unmatchedClasses && res.unmatchedClasses.length > 0) {
           const unmatchedContainer = document.createElement('div');
           unmatchedContainer.className = 'unmatched-list';
@@ -540,9 +533,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           item.appendChild(unmatchedContainer);
         }
 
-        // Click on file level opens the first occurrence
         item.addEventListener('click', (e) => {
-          // Prevent click if clicking a specific sub-location
           if (e.target.closest('.location-item')) return;
           vscode.postMessage({ type: 'open', result: res, locationIndex: 0 });
         });
@@ -554,12 +545,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }
         });
 
-        // Add sub-locations if there are multiple occurrences
         if (res.locations && res.locations.length > 1) {
           const locsList = document.createElement('div');
           locsList.className = 'locations-list';
 
-          // Group by distinct line numbers
           const seenLines = new Set();
           const dedupedLocations = res.locations.filter(loc => {
             if (seenLines.has(loc.line)) return false;
@@ -605,7 +594,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         resultsContainer.appendChild(item);
       });
 
-      // Clear preview when mouse leaves results list
       resultsContainer.addEventListener('mouseleave', () => {
         vscode.postMessage({ type: 'clearPreview' });
       });

@@ -79,27 +79,15 @@ export function isStyleInput(raw: string): boolean {
     return true;
   }
   const hasColon = trimmed.includes(":");
-  const hasSemicolon = trimmed.includes(";");
-  const hasComma = trimmed.includes(",");
-  
   if (!hasColon) return false;
-  if (hasSemicolon) return true;
+  if (trimmed.includes(";") || trimmed.includes(",")) return true;
   
-  const matches = trimmed.match(/[a-zA-Z-]+\s*:/g);
-  if (matches && matches.length >= 2) return true;
-  if (matches && matches.length === 1 && hasComma) return true;
-  
-  const firstColon = trimmed.indexOf(":");
-  const key = trimmed.slice(0, firstColon).trim();
-  const commonProperties = /^(width|height|min-width|min-height|max-width|max-height|font-size|font-weight|padding|margin|color|background|display|flex|position|top|bottom|left|right|border|opacity|z-index|line-height|text-align|align-items|justify-content)/i;
-  if (commonProperties.test(key)) return true;
-
-  return false;
+  const key = trimmed.split(":")[0].trim();
+  return /^(width|height|min-width|min-height|max-width|max-height|font-size|font-weight|padding|margin|color|background|display|flex|position|top|bottom|left|right|border|opacity|z-index|line-height|text-align|align-items|justify-content)/i.test(key);
 }
 
 export function parsePastedStyleList(raw: string): string[] {
   let cleaned = raw.trim();
-  
   const attrMatch = cleaned.match(/\bstyle\s*=\s*\{?\s*["'`]([^"'`]*)["'`]\s*\}?/i);
   if (attrMatch) {
     cleaned = attrMatch[1];

@@ -71,7 +71,6 @@ async function runSearchCommand(): Promise<void> {
       prefill = isStyleInput(clip) ? clip.trim() : extractClassesFromPaste(clip);
     }
   } catch {
-    // clipboard access can fail in some environments — just leave prefill empty
   }
 
   const raw = await vscode.window.showInputBox({
