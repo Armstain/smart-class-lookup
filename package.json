@@ -80,6 +80,11 @@
           "type": "number",
           "default": 0.3,
           "description": "Minimum match score (0-1) a file must reach to be shown in results."
+        },
+        "smartClassLookup.enablePreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable live preview of the file when navigating results (Quick Pick and Sidebar)."
         }
       }
     }

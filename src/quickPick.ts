@@ -98,13 +98,18 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
 
   const subs: vscode.Disposable[] = [];
 
-  subs.push(
-    qp.onDidChangeActive(async (activeItems) => {
-      const active = activeItems[0];
-      if (!active) return;
-      previewEditor = await openAndHighlight(active.result, active.locationIndex, true);
-    })
-  );
+  const cfg = vscode.workspace.getConfiguration("smartClassLookup");
+  const enablePreview = cfg.get<boolean>("enablePreview", true);
+
+  if (enablePreview) {
+    subs.push(
+      qp.onDidChangeActive(async (activeItems) => {
+        const active = activeItems[0];
+        if (!active) return;
+        previewEditor = await openAndHighlight(active.result, active.locationIndex, true);
+      })
+    );
+  }
 
   const picked = await new Promise<Item | undefined>((resolve) => {
     subs.push(

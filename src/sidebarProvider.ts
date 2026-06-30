@@ -20,6 +20,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.view.webview.postMessage({ type: "indexUpdated", fileCount: this.indexer.fileCount });
       }
     });
+
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("smartClassLookup.enablePreview")) {
+        const enabled = vscode.workspace.getConfiguration("smartClassLookup").get<boolean>("enablePreview", true);
+        this.view?.webview.postMessage({ type: "previewConfigChanged", enabled });
+      }
+    });
   }
 
   public resolveWebviewView(
@@ -97,6 +104,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.previewEditor = undefined;
           break;
         }
+        case "togglePreview": {
+          const enabled = data.enabled as boolean;
+          const cfg = vscode.workspace.getConfiguration("smartClassLookup");
+          await cfg.update("enablePreview", enabled, vscode.ConfigurationTarget.Global);
+          break;
+        }
         case "clearPreview": {
           if (this.previewEditor) {
             clearDecorations(this.previewEditor);
@@ -135,6 +148,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const codiconsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "node_modules", "@vscode", "codicons", "dist", "codicon.css")
     );
+
+    const config = vscode.workspace.getConfiguration("smartClassLookup");
+    const enablePreview = config.get<boolean>("enablePreview", true);
+    const previewChecked = enablePreview ? "checked" : "";
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -372,6 +389,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <span>Include general text search</span>
       </label>
     </div>
+    <div class="toggle-container">
+      <label class="toggle-label">
+        <input type="checkbox" id="hover-preview-toggle" ${previewChecked}>
+        <span>Live preview on hover</span>
+      </label>
+    </div>
     <div class="status-text" id="status-text">Indexing status...</div>
   </div>
 
@@ -386,6 +409,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const statusText = document.getElementById('status-text');
     const resultsContainer = document.getElementById('results-container');
     const textSearchToggle = document.getElementById('text-search-toggle');
+    const hoverPreviewToggle = document.getElementById('hover-preview-toggle');
 
     let currentFileCount = 0;
 
@@ -399,6 +423,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         value: searchInput.value,
         textSearchEnabled: textSearchToggle.checked
       });
+    });
+
+    // Sync hover preview toggle with config
+    hoverPreviewToggle.addEventListener('change', () => {
+      vscode.postMessage({ type: 'togglePreview', enabled: hoverPreviewToggle.checked });
     });
 
     let debounceTimer;
@@ -437,6 +466,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         case 'viewVisible':
           currentFileCount = message.fileCount;
           statusText.textContent = \`Index contains \${currentFileCount} files\`;
+          break;
+        case 'previewConfigChanged':
+          hoverPreviewToggle.checked = message.enabled;
           break;
         case 'clipboardText':
           // Auto fill if the input is currently empty
@@ -517,7 +549,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         item.addEventListener('mouseenter', (e) => {
           if (e.target.closest('.location-item')) return;
-          vscode.postMessage({ type: 'preview', result: res, locationIndex: 0 });
+          if (hoverPreviewToggle.checked) {
+            vscode.postMessage({ type: 'preview', result: res, locationIndex: 0 });
+          }
         });
 
         // Add sub-locations if there are multiple occurrences
@@ -557,7 +591,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
               locItem.addEventListener('mouseenter', (e) => {
                 e.stopPropagation();
-                vscode.postMessage({ type: 'preview', result: res, locationIndex: idx });
+                if (hoverPreviewToggle.checked) {
+                  vscode.postMessage({ type: 'preview', result: res, locationIndex: idx });
+                }
               });
 
               locsList.appendChild(locItem);
