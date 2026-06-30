@@ -6,7 +6,7 @@ import type { ClassLocation, FileIndexEntry } from "./types";
 const DEFAULT_INCLUDE = "**/*.{ts,tsx,js,jsx}";
 const DEFAULT_EXCLUDE = "**/{node_modules,.next,dist,build,coverage,.git,out}/**";
 
-const CACHE_KEY = "smartClassLookup.indexCache.v1";
+const CACHE_KEY = "smartClassLookup.indexCache.v2";
 
 interface CachedEntry {
   file: string;

@@ -1,7 +1,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import { WorkspaceIndexer } from "./indexer";
-import { parsePastedClassList, extractClassesFromPaste } from "./classParser";
+import { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePastedStyleList } from "./classParser";
 import { rankFiles } from "./matcher";
 import { openAndHighlight, clearDecorations } from "./quickPick";
 import type { SearchResult } from "./types";
@@ -46,7 +46,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             webviewView.webview.postMessage({ type: "results", results: [] });
             return;
           }
-          const inputClasses = parsePastedClassList(rawInput);
+          const isStyle = isStyleInput(rawInput);
+          const inputClasses = isStyle ? parsePastedStyleList(rawInput) : parsePastedClassList(rawInput);
           const cfg = vscode.workspace.getConfiguration("smartClassLookup");
           const minScore = cfg.get<number>("minScore", 0.15);
           const maxResults = cfg.get<number>("maxResults", 25);
@@ -106,10 +107,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         case "readClipboard": {
           try {
             const text = await vscode.env.clipboard.readText();
-            // Basic validation check to see if it's class soup
-            if (text && text.trim().length > 0 && !/[{};()]/.test(text)) {
-              const cleaned = extractClassesFromPaste(text);
-              webviewView.webview.postMessage({ type: "clipboardText", text: cleaned });
+            if (text && text.trim().length > 0) {
+              if (isStyleInput(text)) {
+                webviewView.webview.postMessage({ type: "clipboardText", text: text.trim() });
+              } else if (!/[{};()]/.test(text)) {
+                const cleaned = extractClassesFromPaste(text);
+                webviewView.webview.postMessage({ type: "clipboardText", text: cleaned });
+              }
             }
           } catch {
             // ignore

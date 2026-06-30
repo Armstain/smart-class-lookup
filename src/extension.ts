@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { WorkspaceIndexer } from "./indexer";
-import { parsePastedClassList, extractClassesFromPaste } from "./classParser";
+import { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePastedStyleList } from "./classParser";
 import { rankFiles } from "./matcher";
 import { showResultsQuickPick } from "./quickPick";
 import { SidebarProvider } from "./sidebarProvider";
@@ -67,8 +67,8 @@ async function runSearchCommand(): Promise<void> {
   let prefill = "";
   try {
     const clip = await vscode.env.clipboard.readText();
-    if (looksLikeClassInput(clip)) {
-      prefill = extractClassesFromPaste(clip);
+    if (looksLikeClassInput(clip) || isStyleInput(clip)) {
+      prefill = isStyleInput(clip) ? clip.trim() : extractClassesFromPaste(clip);
     }
   } catch {
     // clipboard access can fail in some environments — just leave prefill empty
@@ -77,9 +77,9 @@ async function runSearchCommand(): Promise<void> {
   const raw = await vscode.window.showInputBox({
     title: "Smart Class Lookup",
     prompt: prefill
-      ? "Clipboard detected — press Enter to search, or replace with your class list"
-      : "Paste the full class list you copied from DevTools",
-    placeHolder: "relative z-[1050] bg-base-200 px-5 pb-5 pt-4 rounded-2xl shadow-md mb-12",
+      ? "Clipboard detected — press Enter to search, or replace with your input"
+      : "Paste class list or DevTools style (e.g. style=\"...\")",
+    placeHolder: "relative px-5 OR min-height: 100vh; font-size: 13px;",
     value: prefill,
     valueSelection: prefill ? [0, prefill.length] : undefined,
     ignoreFocusOut: true,
@@ -89,9 +89,14 @@ async function runSearchCommand(): Promise<void> {
     return;
   }
 
-  const inputClasses = parsePastedClassList(raw);
+  const isStyle = isStyleInput(raw);
+  const inputClasses = isStyle ? parsePastedStyleList(raw) : parsePastedClassList(raw);
   if (inputClasses.length === 0) {
-    vscode.window.showWarningMessage("Smart Class Lookup: no class names were found in that input.");
+    vscode.window.showWarningMessage(
+      isStyle
+        ? "Smart Class Lookup: no style properties were found in that input."
+        : "Smart Class Lookup: no class names were found in that input."
+    );
     return;
   }
 
@@ -107,3 +112,4 @@ export function deactivate(): void {
   indexer?.dispose();
   indexer = undefined;
 }
+

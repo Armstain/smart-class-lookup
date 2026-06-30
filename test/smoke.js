@@ -2,7 +2,7 @@
 // Doesn't touch vscode at all, so it can run with plain node + ts-node-less
 // compiled JS in isolation.
 const { extractClassesFromSource } = require("../out/astExtractor");
-const { parsePastedClassList, extractClassesFromPaste } = require("../out/classParser");
+const { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePastedStyleList } = require("../out/classParser");
 const { scoreFile, searchTextInFile, rankFiles } = require("../out/matcher");
 
 function buildEntryFromSource(source, file) {
@@ -190,6 +190,36 @@ const ranked = rankFiles(["p-4"], indexMap, { rawInput: "flatpickr-btn" });
 assert(ranked.length === 1, "rankFiles returns the file");
 assert(ranked[0].score === 1.0, `score boosted to 1.0 (got ${ranked[0].score})`);
 assert(ranked[0].locations.length === 2, `locations merged (got ${ranked[0].locations.length})`);
+
+
+// --- Test 9: Proper Inline Style Matching (with px stripping and quotes normalization) ---
+const cssPaste = "min-height: 100vh; font-size: 13px; padding-top: 25px;";
+assert(isStyleInput(cssPaste), "detects inline CSS as style input");
+
+const styleTokens = parsePastedStyleList(cssPaste);
+assert(styleTokens.length === 3, `should parse into 3 style tokens (got ${styleTokens.length})`);
+assert(styleTokens.includes("style:minheight:100vh"), "parses min-height: 100vh");
+assert(styleTokens.includes("style:fontsize:13"), "normalizes font-size: 13px to style:fontsize:13");
+assert(styleTokens.includes("style:paddingtop:25"), "normalizes padding-top: 25px to style:paddingtop:25");
+
+const styleSrc = `
+const StyledDiv = () => (
+  <div style={{
+    minHeight: "100vh",
+    fontSize: 13,
+    paddingTop: "25",
+  }} />
+);
+`;
+const styleEntry = buildEntryFromSource(styleSrc, "/proj/StyledDiv.tsx");
+assert(styleEntry.classes.has("style:minheight:100vh"), "extracts minHeight: '100vh'");
+assert(styleEntry.classes.has("style:fontsize:13"), "extracts fontSize: 13 (numeric)");
+assert(styleEntry.classes.has("style:paddingtop:25"), "extracts paddingTop: '25' (bare string number)");
+
+const styleIndexMap = new Map([["/proj/StyledDiv.tsx", styleEntry]]);
+const styleRanked = rankFiles(styleTokens, styleIndexMap);
+assert(styleRanked.length === 1, "finds file by proper style tokens");
+assert(styleRanked[0].score === 1.0, `perfect match score is 1.0 (got ${styleRanked[0].score})`);
 
 
 console.log("\nDone.");

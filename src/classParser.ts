@@ -56,3 +56,86 @@ export function parsePastedClassList(raw: string): string[] {
   }
   return result;
 }
+
+export function normalizeStyleKey(key: string): string {
+  return key.replace(/-([a-z])/g, (g) => g[1]).toLowerCase();
+}
+
+export function normalizeStyleValue(val: string): string {
+  let clean = val.trim().replace(/^["'`]|["'`]$/g, "").toLowerCase();
+  if (clean.endsWith(";")) {
+    clean = clean.slice(0, -1).trim();
+  }
+  const pixelMatch = clean.match(/^(\d+)px$/);
+  if (pixelMatch) {
+    return pixelMatch[1];
+  }
+  return clean;
+}
+
+export function isStyleInput(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (/^style\s*=/i.test(trimmed)) {
+    return true;
+  }
+  const hasColon = trimmed.includes(":");
+  const hasSemicolon = trimmed.includes(";");
+  const hasComma = trimmed.includes(",");
+  
+  if (!hasColon) return false;
+  if (hasSemicolon) return true;
+  
+  const matches = trimmed.match(/[a-zA-Z-]+\s*:/g);
+  if (matches && matches.length >= 2) return true;
+  if (matches && matches.length === 1 && hasComma) return true;
+  
+  const firstColon = trimmed.indexOf(":");
+  const key = trimmed.slice(0, firstColon).trim();
+  const commonProperties = /^(width|height|min-width|min-height|max-width|max-height|font-size|font-weight|padding|margin|color|background|display|flex|position|top|bottom|left|right|border|opacity|z-index|line-height|text-align|align-items|justify-content)/i;
+  if (commonProperties.test(key)) return true;
+
+  return false;
+}
+
+export function parsePastedStyleList(raw: string): string[] {
+  let cleaned = raw.trim();
+  
+  const attrMatch = cleaned.match(/\bstyle\s*=\s*\{?\s*["'`]([^"'`]*)["'`]\s*\}?/i);
+  if (attrMatch) {
+    cleaned = attrMatch[1];
+  } else {
+    const objMatch = cleaned.match(/\bstyle\s*=\s*\{\{\s*([\s\S]*?)\s*\}\}/i);
+    if (objMatch) {
+      cleaned = objMatch[1];
+    }
+  }
+
+  const delimiter = cleaned.includes(";") ? ";" : ",";
+  const pairs = cleaned.split(delimiter);
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+
+  for (const pair of pairs) {
+    const trimmedPair = pair.trim();
+    if (!trimmedPair) continue;
+
+    const colonIndex = trimmedPair.indexOf(":");
+    if (colonIndex === -1) continue;
+
+    const rawKey = trimmedPair.substring(0, colonIndex).trim().replace(/['""]/g, "");
+    const key = normalizeStyleKey(rawKey);
+
+    let val = trimmedPair.substring(colonIndex + 1).trim().replace(/['"",]/g, "");
+    const cleanVal = normalizeStyleValue(val);
+    if (!key || !cleanVal) continue;
+
+    const token = `style:${key}:${cleanVal}`;
+    if (!seen.has(token)) {
+      seen.add(token);
+      tokens.push(token);
+    }
+  }
+
+  return tokens;
+}
+

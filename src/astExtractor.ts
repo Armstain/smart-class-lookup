@@ -1,7 +1,7 @@
 import { parse } from "@babel/parser";
 import traverse, { type NodePath } from "@babel/traverse";
 import type * as t from "@babel/types";
-import { tokenize } from "./classParser";
+import { tokenize, normalizeStyleKey, normalizeStyleValue } from "./classParser";
 import type { ClassLocation } from "./types";
 
 const CLASS_HELPER_NAMES = new Set([
@@ -155,14 +155,63 @@ export function extractClassesFromSource(
     }
   }
 
+  function collectStylesFromExpression(node: t.Node | null | undefined): void {
+    if (!node) return;
+
+    if (node.type === "JSXExpressionContainer") {
+      collectStylesFromExpression(node.expression as t.Node);
+      return;
+    }
+
+    if (node.type === "ObjectExpression") {
+      for (const prop of node.properties) {
+        if (prop.type !== "ObjectProperty") continue;
+
+        let key: string | undefined;
+        if (prop.key.type === "Identifier" && !prop.computed) {
+          key = prop.key.name;
+        } else if (prop.key.type === "StringLiteral") {
+          key = prop.key.value;
+        }
+
+        if (!key) continue;
+
+        const normalizedKey = normalizeStyleKey(key);
+        const valNode = prop.value;
+
+        if (valNode.type === "StringLiteral" || valNode.type === "NumericLiteral") {
+          const val = String(valNode.value);
+          const cleanVal = normalizeStyleValue(val);
+          if (!cleanVal) continue;
+
+          const loc = prop.loc || node.loc;
+          const lineIndex = loc ? loc.start.line - 1 : 0;
+          const contextLine = sourceLines[lineIndex] ?? `${key}: ${valNode.value}`;
+          const location: ClassLocation = {
+            file: filePath,
+            line: lineIndex,
+            column: loc ? loc.start.column : 0,
+            context: contextLine.trim().slice(0, 140),
+          };
+          found.push({ className: `style:${normalizedKey}:${cleanVal}`, location });
+        }
+      }
+    }
+  }
+
   traverse(ast, {
     JSXAttribute(path: NodePath<t.JSXAttribute>) {
       const name = path.node.name;
-      if (name.type !== "JSXIdentifier" || name.name !== "className") {
+      if (name.type !== "JSXIdentifier") {
         return;
       }
-      collectFromExpression(path.node.value as t.Node | null);
-      path.skip();
+      if (name.name === "className") {
+        collectFromExpression(path.node.value as t.Node | null);
+        path.skip();
+      } else if (name.name === "style") {
+        collectStylesFromExpression(path.node.value as t.Node | null);
+        path.skip();
+      }
     },
 
     CallExpression(path: NodePath<t.CallExpression>) {
