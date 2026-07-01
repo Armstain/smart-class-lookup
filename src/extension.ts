@@ -1,9 +1,12 @@
+import * as path from "path";
 import * as vscode from "vscode";
 import { WorkspaceIndexer } from "./indexer";
 import { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePastedStyleList } from "./classParser";
 import { rankFiles } from "./matcher";
-import { showResultsQuickPick } from "./quickPick";
+import { openAndHighlight, showResultsQuickPick } from "./quickPick";
 import { SidebarProvider } from "./sidebarProvider";
+import { findDuplicateClassGroups } from "./duplicates";
+import type { SearchResult } from "./types";
 
 let indexer: WorkspaceIndexer | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
@@ -41,8 +44,69 @@ export function activate(context: vscode.ExtensionContext): void {
         () => indexer!.buildFullIndex()
       );
       void indexer.startWatching();
-    })
+    }),
+    vscode.commands.registerCommand("smartClassLookup.findDuplicates", runFindDuplicatesCommand)
   );
+}
+
+async function runFindDuplicatesCommand(): Promise<void> {
+  if (!indexer) return;
+
+  const cfg = vscode.workspace.getConfiguration("smartClassLookup");
+  const minClasses = cfg.get<number>("duplicateMinClasses", 3);
+
+  const groups = findDuplicateClassGroups(indexer.getIndex(), minClasses);
+  if (groups.length === 0) {
+    vscode.window.showInformationMessage(
+      `Smart Class Lookup: no duplicate class combinations found (min ${minClasses} classes, 2+ files).`
+    );
+    return;
+  }
+
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  const groupPick = await vscode.window.showQuickPick(
+    groups.map((g) => ({
+      label: `$(files) ${new Set(g.occurrences.map((o) => o.file)).size} files share ${g.classes.length} classes`,
+      description: g.classes.slice(0, 6).join(" ") + (g.classes.length > 6 ? " …" : ""),
+      detail: [...new Set(g.occurrences.map((o) => o.file))]
+        .map((f) => (workspaceRoot ? path.relative(workspaceRoot, f) : f))
+        .join(", "),
+      group: g,
+    })),
+    {
+      title: `Smart Class Lookup — ${groups.length} duplicate class combination${groups.length === 1 ? "" : "s"}`,
+      placeHolder: "Select a duplicated class combination to see where it's used",
+    }
+  );
+
+  if (!groupPick) return;
+
+  const occurrencePick = await vscode.window.showQuickPick(
+    groupPick.group.occurrences.map((o) => ({
+      label: `$(file-code) ${path.basename(o.file)}:${o.line + 1}`,
+      description: workspaceRoot ? path.relative(workspaceRoot, o.file) : o.file,
+      detail: o.context,
+      occurrence: o,
+    })),
+    { title: "Occurrences of this class combination", placeHolder: "Select one to open it" }
+  );
+
+  if (!occurrencePick) return;
+
+  const { file, line, context } = occurrencePick.occurrence;
+  const syntheticResult: SearchResult = {
+    file,
+    matchedCount: groupPick.group.classes.length,
+    totalInputCount: groupPick.group.classes.length,
+    score: 1,
+    matchedClasses: groupPick.group.classes,
+    unmatchedClasses: [],
+    nearMatches: [],
+    locations: [{ file, line, column: 0, context }],
+    maxLineMatches: groupPick.group.classes.length,
+  };
+  await openAndHighlight(syntheticResult, 0, false);
 }
 
 function updateStatusBar(building = false): void {

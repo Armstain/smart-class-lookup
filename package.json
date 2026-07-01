@@ -56,6 +56,11 @@
         "command": "smartClassLookup.rebuildIndex",
         "title": "Smart Class Lookup: Rebuild Index",
         "category": "Smart Class Lookup"
+      },
+      {
+        "command": "smartClassLookup.findDuplicates",
+        "title": "Smart Class Lookup: Find Duplicate Components",
+        "category": "Smart Class Lookup"
       }
     ],
     "configuration": {
@@ -85,6 +90,11 @@
           "type": "boolean",
           "default": true,
           "description": "Enable live preview of the file when navigating results (Quick Pick and Sidebar)."
+        },
+        "smartClassLookup.duplicateMinClasses": {
+          "type": "number",
+          "default": 3,
+          "description": "Minimum number of classes an element must share with another element (in a different file) to be reported by 'Find Duplicate Components'."
         }
       }
     }

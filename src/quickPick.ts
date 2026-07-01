@@ -13,6 +13,16 @@ function formatPercent(score: number): string {
   return `${Math.round(score * 100)}%`;
 }
 
+const COPY_PATH_BUTTON: vscode.QuickInputButton = {
+  iconPath: new vscode.ThemeIcon("copy"),
+  tooltip: "Copy file path",
+};
+
+const COPY_CLASSES_BUTTON: vscode.QuickInputButton = {
+  iconPath: new vscode.ThemeIcon("symbol-string"),
+  tooltip: "Copy matched classes",
+};
+
 // ---------------------------------------------------------------------------
 // Item types
 // ---------------------------------------------------------------------------
@@ -39,6 +49,20 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
   const matchedPreview = result.matchedClasses.slice(0, 8).join(" ");
   const overflow = result.matchedClasses.length > 8 ? " …" : "";
 
+  const detailParts = [`${relativePath}  —  ${matchedPreview}${overflow}`];
+  if (result.nearMatches.length > 0) {
+    const nearPreview = result.nearMatches
+      .slice(0, 4)
+      .map((nm) => `${nm.input}≈${nm.actual}`)
+      .join(", ");
+    detailParts.push(`close: ${nearPreview}`);
+  }
+  if (result.unmatchedClasses.length > 0) {
+    const missingPreview = result.unmatchedClasses.slice(0, 4).join(" ");
+    const missingOverflow = result.unmatchedClasses.length > 4 ? " …" : "";
+    detailParts.push(`missing: ${missingPreview}${missingOverflow}`);
+  }
+
   const seenLines = new Set<number>();
   const dedupedLocations = result.locations.filter((loc) => {
     if (seenLines.has(loc.line)) return false;
@@ -52,7 +76,8 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
     locationIndex: 0,
     label: `$(file-code) ${path.basename(result.file)}`,
     description: `${formatPercent(result.score)} match  (${result.matchedCount}/${result.totalInputCount})`,
-    detail: `${relativePath}  —  ${matchedPreview}${overflow}`,
+    detail: detailParts.join("   |   "),
+    buttons: [COPY_PATH_BUTTON, COPY_CLASSES_BUTTON],
   };
 
   if (dedupedLocations.length <= 1) {
@@ -110,6 +135,19 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
       })
     );
   }
+
+  subs.push(
+    qp.onDidTriggerItemButton(async (e) => {
+      const item = e.item as Item;
+      if (e.button === COPY_PATH_BUTTON) {
+        await vscode.env.clipboard.writeText(item.result.file);
+        vscode.window.setStatusBarMessage("$(check) Copied file path", 2000);
+      } else if (e.button === COPY_CLASSES_BUTTON) {
+        await vscode.env.clipboard.writeText(item.result.matchedClasses.join(" "));
+        vscode.window.setStatusBarMessage("$(check) Copied matched classes", 2000);
+      }
+    })
+  );
 
   const picked = await new Promise<Item | undefined>((resolve) => {
     subs.push(

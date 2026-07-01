@@ -27,6 +27,25 @@ className={cn(
 A plain text/regex search for the DevTools string will never find this.
 Smart Class Lookup will.
 
+## What's new
+
+- **Local variable resolution** — `const styles = cn("p-4", "flex"); <div className={styles}>`
+  is now followed back to its declaration, so classes computed once and reused
+  via a variable are indexed correctly (works for both `className={x}` and
+  `style={x}`, one file, any number of hops).
+- **Near-match scoring for arbitrary values** — pasting `w-[124px]` now
+  partially matches a file that has `w-[120px]` (same utility, different
+  bracketed value) instead of scoring it as a total miss. Near matches are
+  shown separately from exact matches and missing classes in both the Quick
+  Pick and the sidebar.
+- **"Find Duplicate Components" command** — scans the index for elements in
+  different files that share the exact same set of classes, so you can spot
+  copy-pasted markup that's a candidate for extraction into a shared
+  component.
+- **Copy actions** — copy a result's file path or its matched class list
+  straight from the Quick Pick (hover a result for the button icons) or the
+  sidebar (the ⧉ icon next to each result).
+
 ## How it works
 
 1. **Run the command.** `Cmd/Ctrl+Shift+P` → **"Smart Class Lookup"**.
@@ -42,9 +61,15 @@ Smart Class Lookup will.
 4. **Pick an occurrence.** Files with matches on multiple distinct lines are
    expanded into separate entries - one per line - so you can jump to the
    exact component occurrence in one click.
+5. **Check the breakdown.** Each result's detail line shows the classes that
+   matched exactly, any that only near-matched (arbitrary values like
+   `w-[120px]` vs `w-[124px]`), and any that are still missing, so you can
+   judge at a glance whether it's the right component.
 
 A status bar item (bottom right) shows how many files are currently indexed
-and doubles as a shortcut to run the search.
+and doubles as a shortcut to run the search. Run **"Smart Class Lookup: Find
+Duplicate Components"** from the Command Palette to look for elements in
+different files that render with an identical set of classes.
 
 ## Smart paste detection
 
@@ -70,9 +95,10 @@ The extension statically analyzes your files to extract class names from complex
 - **Arrays**: `["p-4", isOpen && "rounded-lg"]`
 - **Object notation**: `clsx({ "bg-red-500": isError })`
 - **Tailwind features**: Arbitrary values (`w-[320px]`), variants (`hover:`, `md:`), and important flags (`!mt-4`)
+- **Local variables**: `const styles = cn("p-4", "flex"); <div className={styles}>` and the same for `style={styleObj}` — resolved back to the value assigned in the same file
 
 > [!NOTE]
-> **Limitation:** Since this uses static analysis, classes defined in a separate file/variable and referenced by name (e.g., `className={styles}`) cannot be resolved.
+> **Limitation:** Variable resolution only follows assignments within the same file. Classes imported from a different file/module and referenced by name (e.g., `import { styles } from "./styles"`) still can't be resolved, since this is static single-file analysis rather than full cross-module data-flow tracking.
 
 ## Indexing & performance
 
@@ -91,25 +117,29 @@ can force a full rebuild with **"Smart Class Lookup: Rebuild Index"**.
 
 ## Settings
 
-| Setting                       | Default                                                   | Description                                |
-| ----------------------------- | --------------------------------------------------------- | ------------------------------------------ |
-| `smartClassLookup.include`    | `**/*.{ts,tsx,js,jsx}`                                    | Files to index                             |
-| `smartClassLookup.exclude`    | `**/{node_modules,.next,dist,build,coverage,.git,out}/**` | Files/folders to skip                      |
-| `smartClassLookup.minScore`   | `0.15`                                                    | Minimum match score (0–1) to show a result |
-| `smartClassLookup.maxResults` | `25`                                                      | Max number of ranked results shown         |
+| Setting                                  | Default                                                   | Description                                                             |
+| ----------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `smartClassLookup.include`               | `**/*.{ts,tsx,js,jsx}`                                    | Files to index                                                          |
+| `smartClassLookup.exclude`               | `**/{node_modules,.next,dist,build,coverage,.git,out}/**` | Files/folders to skip                                                   |
+| `smartClassLookup.minScore`              | `0.3`                                                     | Minimum match score (0–1) to show a result                             |
+| `smartClassLookup.maxResults`            | `25`                                                      | Max number of ranked results shown                                     |
+| `smartClassLookup.enablePreview`         | `true`                                                    | Live preview of the file when navigating results (Quick Pick & Sidebar) |
+| `smartClassLookup.duplicateMinClasses`   | `3`                                                       | Minimum shared classes for "Find Duplicate Components" to report a group |
 
 ## Project layout
 
 ```
 src/
-  extension.ts     activation, command registration, status bar, clipboard pre-fill
-  astExtractor.ts  Babel AST walk: finds class strings + their locations
-  classParser.ts   tokenizes/dedupes the pasted string; strips HTML/JSX wrappers
-  indexer.ts       builds + incrementally maintains the workspace index; persists cache
-  matcher.ts       order-independent similarity scoring & ranking
-  quickPick.ts     results UI: live preview, multi-location items, jump-to-file
+  extension.ts       activation, command registration, status bar, clipboard pre-fill
+  astExtractor.ts    Babel AST walk: finds class strings + their locations, resolves local variables
+  classParser.ts     tokenizes/dedupes the pasted string; strips HTML/JSX wrappers; arbitrary-value helpers
+  indexer.ts         builds + incrementally maintains the workspace index; persists cache
+  matcher.ts         order-independent similarity scoring & ranking, with near-match credit
+  duplicates.ts      finds elements with identical class sets across different files
+  quickPick.ts       results UI: live preview, multi-location items, copy actions, jump-to-file
+  sidebarProvider.ts persistent sidebar search webview
 test/
-  smoke.js         functional tests for the extractor, parser, and matcher (no vscode dep)
+  smoke.js           functional tests for the extractor, parser, matcher, and duplicate finder (no vscode dep)
 ```
 
 ## Developing
@@ -127,9 +157,7 @@ Palette.
 
 ## Possible next steps
 
-- Resolve simple local variable assignments (`const styles = cn(...)`) one
-  hop, for the common "computed once, spread via `{...styles}`" pattern.
-- Add a "copy matched file path" / "copy className" action to each Quick
-  Pick item.
 - Support `.vue`, `.svelte`, and `.html` files via a regex-based fallback
   extractor for `class="..."` attributes.
+- Resolve variables imported from another file, not just declared in the
+  same file.

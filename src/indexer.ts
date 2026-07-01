@@ -1,6 +1,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import { extractClassesFromSource } from "./astExtractor";
+import { buildArbitraryIndex } from "./classParser";
 import type { ClassLocation, FileIndexEntry } from "./types";
 
 const DEFAULT_INCLUDE = "**/*.{ts,tsx,js,jsx}";
@@ -147,6 +148,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
   }
 
   private addEntryToIndex(filePath: string, entry: FileIndexEntry): void {
+    entry.arbitraryIndex = buildArbitraryIndex(entry.classes);
     this.index.set(filePath, entry);
     for (const cls of entry.classes) {
       let set = this.classToFiles.get(cls);

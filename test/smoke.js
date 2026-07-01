@@ -2,8 +2,9 @@
 // Doesn't touch vscode at all, so it can run with plain node + ts-node-less
 // compiled JS in isolation.
 const { extractClassesFromSource } = require("../out/astExtractor");
-const { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePastedStyleList } = require("../out/classParser");
+const { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePastedStyleList, buildArbitraryIndex } = require("../out/classParser");
 const { scoreFile, searchTextInFile, rankFiles } = require("../out/matcher");
+const { findDuplicateClassGroups } = require("../out/duplicates");
 
 function buildEntryFromSource(source, file) {
   const { classes, parseError } = extractClassesFromSource(source, file);
@@ -16,7 +17,7 @@ function buildEntryFromSource(source, file) {
     list.push(location);
     locations.set(className, list);
   }
-  return { file, classes: classSet, locations, mtimeMs: Date.now(), source };
+  return { file, classes: classSet, locations, mtimeMs: Date.now(), source, arbitraryIndex: buildArbitraryIndex(classSet) };
 }
 
 function assert(cond, msg) {
@@ -221,5 +222,60 @@ const styleRanked = rankFiles(styleTokens, styleIndexMap);
 assert(styleRanked.length === 1, "finds file by proper style tokens");
 assert(styleRanked[0].score === 1.0, `perfect match score is 1.0 (got ${styleRanked[0].score})`);
 
+
+// --- Test 10: Local variable indirection (const styles = cn(...); className={styles}) ---
+const varSrc = `
+function Widget({ isOpen }) {
+  const styles = cn("p-4", isOpen && "block", "rounded-lg");
+  const styleObj = { fontSize: "13px" };
+  return (
+    <div className={styles} style={styleObj}>
+      hi
+    </div>
+  );
+}
+`;
+const varEntry = buildEntryFromSource(varSrc, "/proj/Widget.tsx");
+for (const cls of ["p-4", "block", "rounded-lg"]) {
+  assert(varEntry.classes.has(cls), `Widget.tsx resolves "${cls}" through const styles = cn(...); className={styles}`);
+}
+assert(varEntry.classes.has("style:fontsize:13"), "Widget.tsx resolves style={styleObj} back to its object literal");
+
+// --- Test 11: Near-match scoring for arbitrary values (w-[120px] vs w-[124px]) ---
+const arbitrarySrc = `<div className={cn("flex", "w-[120px]", "text-[#fff]")} />`;
+const arbitraryEntry = buildEntryFromSource(arbitrarySrc, "/proj/Arbitrary.tsx");
+const arbitraryInput = parsePastedClassList("flex w-[124px] text-[#fff]");
+const nearResult = scoreFile(arbitraryInput, arbitraryEntry);
+assert(nearResult !== null, "scoreFile returns a result when an arbitrary value only near-matches");
+assert(nearResult.matchedClasses.length === 2, `2 exact matches (flex, text-[#fff]) (got ${nearResult.matchedClasses.length})`);
+assert(nearResult.nearMatches.length === 1, `1 near-match for w-[124px]~w-[120px] (got ${nearResult.nearMatches.length})`);
+assert(nearResult.nearMatches[0].actual === "w-[120px]", `near-match resolves to the file's actual class (got ${nearResult.nearMatches[0].actual})`);
+assert(nearResult.unmatchedClasses.length === 0, "the near-matched class is not also reported as unmatched");
+assert(
+  Math.abs(nearResult.score - (2 + 0.7) / 3) < 1e-9,
+  `score gives partial credit for near matches (got ${nearResult.score})`
+);
+
+// A completely unrelated arbitrary value should not near-match.
+const unrelatedInput = parsePastedClassList("flex h-[50px]");
+const noNearResult = scoreFile(unrelatedInput, arbitraryEntry);
+assert(noNearResult.unmatchedClasses.includes("h-[50px]"), "unrelated arbitrary-value utility (h- vs w-) is not falsely near-matched");
+
+// --- Test 12: Duplicate-component detection across files ---
+const dupSrcA = `<div className="flex items-center gap-2 rounded-lg p-4 shadow-md" />`;
+const dupSrcB = `<span className="flex items-center gap-2 rounded-lg p-4 shadow-md" />`;
+const dupSrcC = `<div className="flex" />`;
+const dupIndex = new Map([
+  ["/proj/A.tsx", buildEntryFromSource(dupSrcA, "/proj/A.tsx")],
+  ["/proj/B.tsx", buildEntryFromSource(dupSrcB, "/proj/B.tsx")],
+  ["/proj/C.tsx", buildEntryFromSource(dupSrcC, "/proj/C.tsx")],
+]);
+const dupGroups = findDuplicateClassGroups(dupIndex, 3);
+assert(dupGroups.length === 1, `finds exactly 1 duplicated class combination (got ${dupGroups.length})`);
+assert(dupGroups[0].occurrences.length === 2, `duplicate group has 2 occurrences (got ${dupGroups[0].occurrences.length})`);
+assert(
+  new Set(dupGroups[0].occurrences.map((o) => o.file)).size === 2,
+  "duplicate group spans 2 distinct files"
+);
 
 console.log("\nDone.");

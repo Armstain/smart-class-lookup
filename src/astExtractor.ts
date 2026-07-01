@@ -51,6 +51,19 @@ export function extractClassesFromSource(
   const sourceLines = source.split(/\r?\n/);
   const found: ExtractedClass[] = [];
 
+  // First pass: record `const x = ...` initializers so className={x} / style={x}
+  // can be resolved back to the value assigned to x elsewhere in the file.
+  const varInitializers = new Map<string, t.Node>();
+  traverse(ast, {
+    VariableDeclarator(path: NodePath<t.VariableDeclarator>) {
+      const id = path.node.id;
+      if (id.type === "Identifier" && path.node.init) {
+        varInitializers.set(id.name, path.node.init);
+      }
+    },
+  });
+  const resolvingVars = new Set<string>();
+
   const emit = (raw: string, node: t.Node) => {
     if (!raw) return;
     const loc = node.loc;
@@ -150,9 +163,24 @@ export function extractClassesFromSource(
         return;
       }
 
+      case "Identifier": {
+        resolveVariable(node.name, collectFromExpression);
+        return;
+      }
+
       default:
         return;
     }
+  }
+
+  // Resolves `const x = <init>` back to <init> so className={x}/style={x} can be
+  // followed. Guards against cycles (const a = b; const b = a;) via resolvingVars.
+  function resolveVariable(name: string, visit: (node: t.Node | null | undefined) => void): void {
+    const init = varInitializers.get(name);
+    if (!init || resolvingVars.has(name)) return;
+    resolvingVars.add(name);
+    visit(init);
+    resolvingVars.delete(name);
   }
 
   function collectStylesFromExpression(node: t.Node | null | undefined): void {
@@ -160,6 +188,11 @@ export function extractClassesFromSource(
 
     if (node.type === "JSXExpressionContainer") {
       collectStylesFromExpression(node.expression as t.Node);
+      return;
+    }
+
+    if (node.type === "Identifier") {
+      resolveVariable(node.name, collectStylesFromExpression);
       return;
     }
 

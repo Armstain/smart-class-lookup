@@ -1,7 +1,11 @@
 import * as fs from "fs";
-import type { FileIndexEntry, SearchResult } from "./types";
+import { arbitraryValueBase } from "./classParser";
+import type { FileIndexEntry, NearMatch, SearchResult } from "./types";
 
 const MAX_LOCATIONS_PER_RESULT = 12;
+// Credit given for an arbitrary-value class that matches on utility+variant but differs
+// only in the bracketed value (e.g. w-[120px] vs w-[124px]) — less than a full match.
+const NEAR_MATCH_WEIGHT = 0.7;
 
 function getOrLoadSource(entry: FileIndexEntry): string {
   if (entry.source !== undefined) {
@@ -57,6 +61,7 @@ export function searchTextInFile(
     score: 1.0,
     matchedClasses: [query],
     unmatchedClasses: [],
+    nearMatches: [],
     locations: locations.slice(0, MAX_LOCATIONS_PER_RESULT),
     maxLineMatches: locations.length,
   };
@@ -72,28 +77,38 @@ export function scoreFile(
 
   const matchedClasses: string[] = [];
   const unmatchedClasses: string[] = [];
+  const nearMatches: NearMatch[] = [];
 
   for (const cls of inputClasses) {
     if (entry.classes.has(cls)) {
       matchedClasses.push(cls);
+      continue;
+    }
+
+    const base = arbitraryValueBase(cls);
+    const candidates = base ? entry.arbitraryIndex?.get(base) : undefined;
+    if (candidates && candidates.length > 0) {
+      nearMatches.push({ input: cls, actual: candidates[0] });
     } else {
       unmatchedClasses.push(cls);
     }
   }
 
-  if (matchedClasses.length === 0) {
+  if (matchedClasses.length === 0 && nearMatches.length === 0) {
     return null;
   }
 
-  const score = matchedClasses.length / inputClasses.length;
+  const score =
+    (matchedClasses.length + nearMatches.length * NEAR_MATCH_WEIGHT) / inputClasses.length;
 
-  const locations = matchedClasses
+  const nearMatchActualNames = nearMatches.map((nm) => nm.actual);
+  const locations = [...matchedClasses, ...nearMatchActualNames]
     .flatMap((cls) => entry.locations.get(cls) ?? [])
     .slice(0, MAX_LOCATIONS_PER_RESULT);
 
-  // Group matched classes by line number to find the maximum matches on any single line
+  // Group matched (+ near-matched) classes by line number to find the maximum matches on any single line
   const lineToMatches = new Map<number, Set<string>>();
-  for (const cls of matchedClasses) {
+  for (const cls of [...matchedClasses, ...nearMatchActualNames]) {
     const locs = entry.locations.get(cls) ?? [];
     for (const loc of locs) {
       let set = lineToMatches.get(loc.line);
@@ -119,6 +134,7 @@ export function scoreFile(
     score,
     matchedClasses,
     unmatchedClasses,
+    nearMatches,
     locations,
     maxLineMatches,
   };

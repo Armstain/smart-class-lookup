@@ -79,6 +79,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               totalInputCount: r.totalInputCount,
               matchedClasses: r.matchedClasses,
               unmatchedClasses: r.unmatchedClasses,
+              nearMatches: r.nearMatches,
               locations: r.locations.map((loc) => ({
                 line: loc.line,
                 column: loc.column,
@@ -113,6 +114,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           if (this.previewEditor) {
             clearDecorations(this.previewEditor);
             this.previewEditor = undefined;
+          }
+          break;
+        }
+        case "copy": {
+          const text = data.text as string;
+          if (text) {
+            await vscode.env.clipboard.writeText(text);
+            vscode.window.setStatusBarMessage("$(check) Copied to clipboard", 2000);
           }
           break;
         }
@@ -368,6 +377,44 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       text-decoration: line-through;
     }
 
+    .near-match-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+      font-size: 10px;
+    }
+
+    .near-match-label {
+      color: var(--vscode-charts-yellow, #cca700);
+      opacity: 0.8;
+      font-weight: 500;
+    }
+
+    .near-match-class {
+      background: rgba(204, 167, 0, 0.15);
+      color: var(--vscode-charts-yellow, #cca700);
+      padding: 1px 4px;
+      border-radius: 2px;
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--vscode-descriptionForeground, #858585);
+      cursor: pointer;
+      opacity: 0.7;
+      padding: 0 2px;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .copy-btn:hover {
+      opacity: 1;
+      color: var(--vscode-foreground, #cccccc);
+    }
+
     .no-results {
       padding: 20px;
       text-align: center;
@@ -505,8 +552,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         percent.className = 'match-percent';
         percent.textContent = \`\${Math.round(res.score * 100)}% match\`;
 
+        const copyPathBtn = document.createElement('button');
+        copyPathBtn.className = 'copy-btn';
+        copyPathBtn.title = 'Copy file path';
+        copyPathBtn.textContent = '⧉';
+        copyPathBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          vscode.postMessage({ type: 'copy', text: res.file });
+        });
+
         header.appendChild(name);
         header.appendChild(percent);
+        header.appendChild(copyPathBtn);
 
         const path = document.createElement('div');
         path.className = 'file-path';
@@ -514,6 +571,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         item.appendChild(header);
         item.appendChild(path);
+
+        if (res.nearMatches && res.nearMatches.length > 0) {
+          const nearContainer = document.createElement('div');
+          nearContainer.className = 'near-match-list';
+
+          const nearLabel = document.createElement('span');
+          nearLabel.className = 'near-match-label';
+          nearLabel.textContent = 'Close: ';
+          nearContainer.appendChild(nearLabel);
+
+          res.nearMatches.forEach((nm) => {
+            const badge = document.createElement('span');
+            badge.className = 'near-match-class';
+            badge.textContent = \`\${nm.input} ≈ \${nm.actual}\`;
+            nearContainer.appendChild(badge);
+          });
+          item.appendChild(nearContainer);
+        }
 
         if (res.unmatchedClasses && res.unmatchedClasses.length > 0) {
           const unmatchedContainer = document.createElement('div');

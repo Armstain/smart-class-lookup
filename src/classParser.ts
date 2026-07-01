@@ -73,6 +73,26 @@ export function normalizeStyleValue(val: string): string {
   return clean;
 }
 
+export function arbitraryValueBase(cls: string): string | null {
+  if (!cls.includes("[") || !cls.includes("]")) return null;
+  return cls.replace(/\[[^\]]*\]/g, "[]");
+}
+
+export function buildArbitraryIndex(classes: Iterable<string>): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const cls of classes) {
+    const base = arbitraryValueBase(cls);
+    if (!base) continue;
+    const list = index.get(base);
+    if (list) {
+      list.push(cls);
+    } else {
+      index.set(base, [cls]);
+    }
+  }
+  return index;
+}
+
 export function isStyleInput(raw: string): boolean {
   const trimmed = raw.trim();
   if (/^style\s*=/i.test(trimmed)) {
