@@ -12,7 +12,7 @@ let indexer: WorkspaceIndexer | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-  const output = vscode.window.createOutputChannel("Smart Class Lookup");
+  const output = vscode.window.createOutputChannel("Smart Class Search");
   context.subscriptions.push(output);
 
   indexer = new WorkspaceIndexer(output, context);
@@ -40,7 +40,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("smartClassLookup.rebuildIndex", async () => {
       if (!indexer) return;
       await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: "Smart Class Lookup: rebuilding index..." },
+        { location: vscode.ProgressLocation.Notification, title: "Smart Class Search: rebuilding index..." },
         () => indexer!.buildFullIndex()
       );
       void indexer.startWatching();
@@ -58,7 +58,7 @@ async function runFindDuplicatesCommand(): Promise<void> {
   const groups = findDuplicateClassGroups(indexer.getIndex(), minClasses);
   if (groups.length === 0) {
     vscode.window.showInformationMessage(
-      `Smart Class Lookup: no duplicate class combinations found (min ${minClasses} classes, 2+ files).`
+      `Smart Class Search: no duplicate class combinations found (min ${minClasses} classes, 2+ files).`
     );
     return;
   }
@@ -75,7 +75,7 @@ async function runFindDuplicatesCommand(): Promise<void> {
       group: g,
     })),
     {
-      title: `Smart Class Lookup — ${groups.length} duplicate class combination${groups.length === 1 ? "" : "s"}`,
+      title: `Smart Class Search — ${groups.length} duplicate class combination${groups.length === 1 ? "" : "s"}`,
       placeHolder: "Select a duplicated class combination to see where it's used",
     }
   );
@@ -112,9 +112,9 @@ async function runFindDuplicatesCommand(): Promise<void> {
 function updateStatusBar(building = false): void {
   if (!statusBarItem || !indexer) return;
   statusBarItem.text = building
-    ? "$(sync~spin) Smart Class Lookup: indexing…"
-    : `$(search) Smart Class Lookup (${indexer.fileCount} files)`;
-  statusBarItem.tooltip = "Click to run Smart Class Lookup";
+    ? "$(sync~spin) Smart Class Search: indexing…"
+    : `$(search) Smart Class Search (${indexer.fileCount} files)`;
+  statusBarItem.tooltip = "Click to run Smart Class Search";
 }
 
 function looksLikeClassInput(text: string): boolean {
@@ -138,7 +138,7 @@ async function runSearchCommand(): Promise<void> {
   }
 
   const raw = await vscode.window.showInputBox({
-    title: "Smart Class Lookup",
+    title: "Smart Class Search",
     prompt: prefill
       ? "Clipboard detected — press Enter to search, or replace with your input"
       : "Paste class list or DevTools style (e.g. style=\"...\")",
@@ -157,8 +157,8 @@ async function runSearchCommand(): Promise<void> {
   if (inputClasses.length === 0) {
     vscode.window.showWarningMessage(
       isStyle
-        ? "Smart Class Lookup: no style properties were found in that input."
-        : "Smart Class Lookup: no class names were found in that input."
+        ? "Smart Class Search: no style properties were found in that input."
+        : "Smart Class Search: no class names were found in that input."
     );
     return;
   }

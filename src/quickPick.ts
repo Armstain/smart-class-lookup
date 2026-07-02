@@ -103,7 +103,7 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
 export async function showResultsQuickPick(results: SearchResult[]): Promise<void> {
   if (results.length === 0) {
     vscode.window.showInformationMessage(
-      "Smart Class Lookup: no files matched any of the pasted classes."
+      "Smart Class Search: no files matched any of the pasted classes."
     );
     return;
   }
@@ -116,7 +116,7 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
 
   const qp = vscode.window.createQuickPick<Item>();
   qp.items = items;
-  qp.title = `Smart Class Lookup — ${results.length} match${results.length === 1 ? "" : "es"}`;
+  qp.title = `Smart Class Search — ${results.length} match${results.length === 1 ? "" : "es"}`;
   qp.placeholder = "Select a result to open it at the matching line";
   qp.matchOnDescription = true;
   qp.matchOnDetail = true;

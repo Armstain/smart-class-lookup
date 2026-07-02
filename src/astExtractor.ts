@@ -51,8 +51,6 @@ export function extractClassesFromSource(
   const sourceLines = source.split(/\r?\n/);
   const found: ExtractedClass[] = [];
 
-  // First pass: record `const x = ...` initializers so className={x} / style={x}
-  // can be resolved back to the value assigned to x elsewhere in the file.
   const varInitializers = new Map<string, t.Node>();
   traverse(ast, {
     VariableDeclarator(path: NodePath<t.VariableDeclarator>) {

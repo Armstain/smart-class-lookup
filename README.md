@@ -1,4 +1,4 @@
-# Smart Class Lookup
+# Smart Class Search
 
 Copy a class list out of Chrome DevTools, paste it into one command, and jump
 straight to the component that renders it - even when your codebase spreads
@@ -25,7 +25,7 @@ className={cn(
 ```
 
 A plain text/regex search for the DevTools string will never find this.
-Smart Class Lookup will.
+Smart Class Search will.
 
 ## What's new
 
@@ -48,7 +48,7 @@ Smart Class Lookup will.
 
 ## How it works
 
-1. **Run the command.** `Cmd/Ctrl+Shift+P` → **"Smart Class Lookup"**.
+1. **Run the command.** `Cmd/Ctrl+Shift+P` → **"Smart Class Search"**.
 2. **Paste your class list.** The input box is pre-filled from your clipboard
    if it already contains a class list or HTML element (just press `Enter`).
    You can also paste a full DevTools element like
@@ -67,7 +67,7 @@ Smart Class Lookup will.
    judge at a glance whether it's the right component.
 
 A status bar item (bottom right) shows how many files are currently indexed
-and doubles as a shortcut to run the search. Run **"Smart Class Lookup: Find
+and doubles as a shortcut to run the search. Run **"Smart Class Search: Find
 Duplicate Components"** from the Command Palette to look for elements in
 different files that render with an identical set of classes.
 
@@ -113,7 +113,7 @@ When no cache exists (first run), the extension scans the workspace once
 `build`, `coverage`, `.git`, `out`) and builds an in-memory index of
 `class → file → locations`. After that, a `FileSystemWatcher` keeps the
 index current incrementally - only the file that changed gets re-parsed. You
-can force a full rebuild with **"Smart Class Lookup: Rebuild Index"**.
+can force a full rebuild with **"Smart Class Search: Rebuild Index"**.
 
 ## Settings
 
@@ -152,7 +152,7 @@ npm run watch       # tsc --watch, for use with the Extension Development Host
 
 To try it in VS Code: open this folder, press `F5` to launch an Extension
 Development Host with the extension loaded, open any React/Next.js project
-in that window, and run **"Smart Class Lookup"** from the Command
+in that window, and run **"Smart Class Search"** from the Command
 Palette.
 
 ## Possible next steps

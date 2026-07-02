@@ -1,9 +1,9 @@
 {
   "name": "smart-class-lookup",
-  "displayName": "Smart Class Lookup",
-  "description": "Paste a class list copied from DevTools and find the matching component anywhere in your workspace — even when classes are split across cn(), clsx(), classnames(), template literals, arrays, ternaries, and conditionals.",
-  "version": "0.1.0",
-  "publisher": "Adnan",
+  "displayName": "Smart Class Search",
+  "description": "Paste classes copied from DevTools and instantly find the matching component in your workspace. Built for Tailwind — supports cn(), clsx(), classnames(), template literals, arrays, ternaries, and conditional classNames.",
+  "version": "0.2.1",
+  "publisher": "nazmul-hossain-adnan",
   "icon": "resources/logo.png",
   "repository": {
     "type": "git",
@@ -32,7 +32,7 @@
       "activitybar": [
         {
           "id": "smart-class-lookup-sidebar",
-          "title": "Smart Class Lookup",
+          "title": "Smart Class Search",
           "icon": "resources/search.svg"
         }
       ]
@@ -42,29 +42,29 @@
         {
           "type": "webview",
           "id": "smartClassLookup.sidebarView",
-          "name": "Class Lookup"
+          "name": "Class Search"
         }
       ]
     },
     "commands": [
       {
         "command": "smartClassLookup.search",
-        "title": "Smart Class Lookup",
-        "category": "Smart Class Lookup"
+        "title": "Smart Class Search",
+        "category": "Smart Class Search"
       },
       {
         "command": "smartClassLookup.rebuildIndex",
-        "title": "Smart Class Lookup: Rebuild Index",
-        "category": "Smart Class Lookup"
+        "title": "Smart Class Search: Rebuild Index",
+        "category": "Smart Class Search"
       },
       {
         "command": "smartClassLookup.findDuplicates",
-        "title": "Smart Class Lookup: Find Duplicate Components",
-        "category": "Smart Class Lookup"
+        "title": "Smart Class Search: Find Duplicate Components",
+        "category": "Smart Class Search"
       }
     ],
     "configuration": {
-      "title": "Smart Class Lookup",
+      "title": "Smart Class Search",
       "properties": {
         "smartClassLookup.include": {
           "type": "string",
@@ -107,10 +107,11 @@
     "test": "npm run compile && node test/smoke.js"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
-    "@types/node": "^20.11.0",
     "@types/babel__traverse": "^7.20.5",
-    "typescript": "^5.4.5"
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.5",
+    "vsce": "^2.15.0"
   },
   "dependencies": {
     "@babel/parser": "^7.24.6",
