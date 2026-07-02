@@ -1,9 +1,16 @@
 # Smart Class Search
 
-Copy a class list out of Chrome DevTools, paste it into one command, and jump
-straight to the component that renders it - even when your codebase spreads
-those classes across `cn()`, `clsx()`, `classnames()`, template literals,
-arrays, ternaries, and `&&` conditionals.
+Copy a class list out of Chrome DevTools, paste it into the sidebar or the
+Command Palette, and jump straight to the component that renders it - even
+when your codebase spreads those classes across `cn()`, `clsx()`,
+`classnames()`, template literals, arrays, ternaries, and `&&` conditionals.
+
+A plain text/regex search for the DevTools string will never find any of
+these. Smart Class Search will.
+
+## Examples
+
+**`cn()` with conditionals**
 
 ```html
 <!-- copied from DevTools -->
@@ -24,59 +31,90 @@ className={cn(
 )}
 ```
 
-A plain text/regex search for the DevTools string will never find this.
-Smart Class Search will.
+**`clsx()` object notation**
 
-## What's new
+```html
+<div class="bg-red-500 text-white p-4"></div>
+```
 
-- **Local variable resolution** — `const styles = cn("p-4", "flex"); <div className={styles}>`
-  is now followed back to its declaration, so classes computed once and reused
-  via a variable are indexed correctly (works for both `className={x}` and
-  `style={x}`, one file, any number of hops).
-- **Near-match scoring for arbitrary values** — pasting `w-[124px]` now
-  partially matches a file that has `w-[120px]` (same utility, different
-  bracketed value) instead of scoring it as a total miss. Near matches are
-  shown separately from exact matches and missing classes in both the Quick
-  Pick and the sidebar.
-- **"Find Duplicate Components" command** — scans the index for elements in
-  different files that share the exact same set of classes, so you can spot
-  copy-pasted markup that's a candidate for extraction into a shared
-  component.
-- **Copy actions** — copy a result's file path or its matched class list
-  straight from the Quick Pick (hover a result for the button icons) or the
-  sidebar (the ⧉ icon next to each result).
+```tsx
+className={clsx({
+  "bg-red-500": isError,
+  "text-white": true,
+  "p-4": true,
+})}
+```
+
+**Local variable resolution**
+
+```html
+<div class="p-4 flex rounded-lg"></div>
+```
+
+```tsx
+const cardStyles = cn("p-4", "flex", "rounded-lg");
+// ...later in the same file
+<div className={cardStyles}>
+```
+
+**Template literal + ternary**
+
+```html
+<div class="bg-white shadow-md"></div>
+```
+
+```tsx
+className={`bg-white ${isOpen ? "shadow-md" : ""}`}
+```
 
 ## How it works
 
-1. **Run the command.** `Cmd/Ctrl+Shift+P` → **"Smart Class Search"**.
-2. **Paste your class list.** The input box is pre-filled from your clipboard
-   if it already contains a class list or HTML element (just press `Enter`).
+You can search from the sidebar or the Command Palette - both share the same
+index, so pick whichever fits the moment.
+
+### Sidebar (stays open, updates as you type)
+
+1. Click the search icon in the Activity Bar to open the **Class Search**
+   panel (or click the status bar item at the bottom right).
+2. Paste your class list or a full DevTools element - the panel pre-fills
+   from your clipboard as soon as it opens.
+3. Results update live as you type. Hover a result to preview it inline
+   (toggle with "Live preview on hover"), or click it to jump straight there.
+4. Files with matches on multiple lines expand into a list under the result -
+   click any line to jump to that exact occurrence.
+5. Use the ⧉ icons to copy a result's file path or matched class list without
+   leaving the panel.
+
+### Command Palette (one-off, self-closing)
+
+1. `Cmd/Ctrl+Shift+P` → **"Smart Class Search"**.
+2. Paste your class list. The input box is pre-filled from your clipboard if
+   it already contains a class list or HTML element (just press `Enter`).
    You can also paste a full DevTools element like
    `<div class="p-4 flex rounded-lg">` and the extension strips the HTML
    wrapper automatically - only the class names are used.
-3. **Navigate the results.** As you arrow through the Quick Pick, the
-   matching file opens in a live preview tab with the matched lines
-   highlighted in real time. Press `Escape` to cancel and restore your
-   original editor.
-4. **Pick an occurrence.** Files with matches on multiple distinct lines are
+3. Navigate the results. As you arrow through the Quick Pick, the matching
+   file opens in a live preview tab with the matched lines highlighted in
+   real time. Press `Escape` to cancel and restore your original editor.
+4. Pick an occurrence. Files with matches on multiple distinct lines are
    expanded into separate entries - one per line - so you can jump to the
    exact component occurrence in one click.
-5. **Check the breakdown.** Each result's detail line shows the classes that
+5. Check the breakdown. Each result's detail line shows the classes that
    matched exactly, any that only near-matched (arbitrary values like
    `w-[120px]` vs `w-[124px]`), and any that are still missing, so you can
    judge at a glance whether it's the right component.
 
-A status bar item (bottom right) shows how many files are currently indexed
-and doubles as a shortcut to run the search. Run **"Smart Class Search: Find
-Duplicate Components"** from the Command Palette to look for elements in
-different files that render with an identical set of classes.
+Run **"Smart Class Search: Find Duplicate Components"** from the Command
+Palette any time to look for elements in different files that render with an
+identical set of classes.
 
 ## Smart paste detection
 
-The input box accepts any of the following - no manual trimming required:
+Both the sidebar and the Command Palette accept any of the following - no
+manual trimming required:
 
 | What you paste             | What is used     |
-| -------------------------- | ---------------- |
+| --------------------------- | ---------------- |
 | `p-4 flex rounded-lg`      | the whole string |
 | `<div class="p-4 flex">`   | `p-4 flex`       |
 | `class="p-4 flex"`         | `p-4 flex`       |
@@ -161,3 +199,22 @@ Palette.
   extractor for `class="..."` attributes.
 - Resolve variables imported from another file, not just declared in the
   same file.
+
+## What's new
+
+- **Local variable resolution** — `const styles = cn("p-4", "flex"); <div className={styles}>`
+  is now followed back to its declaration, so classes computed once and reused
+  via a variable are indexed correctly (works for both `className={x}` and
+  `style={x}`, one file, any number of hops).
+- **Near-match scoring for arbitrary values** — pasting `w-[124px]` now
+  partially matches a file that has `w-[120px]` (same utility, different
+  bracketed value) instead of scoring it as a total miss. Near matches are
+  shown separately from exact matches and missing classes in both the Quick
+  Pick and the sidebar.
+- **"Find Duplicate Components" command** — scans the index for elements in
+  different files that share the exact same set of classes, so you can spot
+  copy-pasted markup that's a candidate for extraction into a shared
+  component.
+- **Copy actions** — copy a result's file path or its matched class list
+  straight from the Quick Pick (hover a result for the button icons) or the
+  sidebar (the ⧉ icon next to each result).
