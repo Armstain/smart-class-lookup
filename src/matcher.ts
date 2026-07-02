@@ -1,10 +1,8 @@
 import * as fs from "fs";
 import { arbitraryValueBase } from "./classParser";
-import type { FileIndexEntry, NearMatch, SearchResult } from "./types";
+import type { ClassLocation, FileIndexEntry, NearMatch, SearchResult } from "./types";
 
 const MAX_LOCATIONS_PER_RESULT = 12;
-// Credit given for an arbitrary-value class that matches on utility+variant but differs
-// only in the bracketed value (e.g. w-[120px] vs w-[124px]) — less than a full match.
 const NEAR_MATCH_WEIGHT = 0.7;
 
 function getOrLoadSource(entry: FileIndexEntry): string {
@@ -102,13 +100,12 @@ export function scoreFile(
     (matchedClasses.length + nearMatches.length * NEAR_MATCH_WEIGHT) / inputClasses.length;
 
   const nearMatchActualNames = nearMatches.map((nm) => nm.actual);
-  const locations = [...matchedClasses, ...nearMatchActualNames]
-    .flatMap((cls) => entry.locations.get(cls) ?? [])
-    .slice(0, MAX_LOCATIONS_PER_RESULT);
+  const matchedAndNear = [...matchedClasses, ...nearMatchActualNames];
 
   // Group matched (+ near-matched) classes by line number to find the maximum matches on any single line
   const lineToMatches = new Map<number, Set<string>>();
-  for (const cls of [...matchedClasses, ...nearMatchActualNames]) {
+  const lineToLocation = new Map<number, ClassLocation>();
+  for (const cls of matchedAndNear) {
     const locs = entry.locations.get(cls) ?? [];
     for (const loc of locs) {
       let set = lineToMatches.get(loc.line);
@@ -117,6 +114,9 @@ export function scoreFile(
         lineToMatches.set(loc.line, set);
       }
       set.add(cls);
+      if (!lineToLocation.has(loc.line)) {
+        lineToLocation.set(loc.line, loc);
+      }
     }
   }
 
@@ -126,6 +126,16 @@ export function scoreFile(
       maxLineMatches = matchSet.size;
     }
   }
+
+  // Only surface lines tied for the best overlap with the query. The point of the
+  // sub-location list is "other places this same combination shows up" (e.g. a repeated
+  // component), not "every element that happens to share one matched class" — a line with
+  // just 1 of 7 matched classes isn't a useful candidate once a fuller match exists.
+  const locations = Array.from(lineToLocation.entries())
+    .filter(([line]) => lineToMatches.get(line)?.size === maxLineMatches)
+    .sort(([lineA], [lineB]) => lineA - lineB)
+    .map(([, loc]) => loc)
+    .slice(0, MAX_LOCATIONS_PER_RESULT);
 
   return {
     file: entry.file,
@@ -164,9 +174,11 @@ export function rankFiles(
       if (textResult) {
         const existing = resultsMap.get(entry.file);
         if (existing) {
-          // Merge matched text locations with class matches
-          const mergedLocations = [...existing.locations];
-          for (const loc of textResult.locations) {
+          // The raw text match found the literal, full multi-class string, so it's the
+          // strongest possible signal — put those locations first, ahead of individual
+          // per-class hits, instead of only appending them when their line is missing.
+          const mergedLocations = [...textResult.locations];
+          for (const loc of existing.locations) {
             if (!mergedLocations.some((l) => l.line === loc.line)) {
               mergedLocations.push(loc);
             }
