@@ -355,6 +355,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       white-space: nowrap;
     }
 
+    .matched-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+      font-size: 10px;
+    }
+
+    .matched-label {
+      color: var(--vscode-charts-green, #89d185);
+      opacity: 0.8;
+      font-weight: 500;
+    }
+
+    .matched-class {
+      background: rgba(137, 209, 133, 0.15);
+      color: var(--vscode-charts-green, #89d185);
+      padding: 1px 4px;
+      border-radius: 2px;
+    }
+
     .unmatched-list {
       display: flex;
       flex-wrap: wrap;
@@ -571,6 +592,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         item.appendChild(header);
         item.appendChild(path);
+
+        if (res.matchedClasses && res.matchedClasses.length > 0) {
+          const matchedContainer = document.createElement('div');
+          matchedContainer.className = 'matched-list';
+
+          const matchedLabel = document.createElement('span');
+          matchedLabel.className = 'matched-label';
+          matchedLabel.textContent = 'Matched: ';
+          matchedContainer.appendChild(matchedLabel);
+
+          res.matchedClasses.forEach((cls) => {
+            const badge = document.createElement('span');
+            badge.className = 'matched-class';
+            badge.textContent = cls;
+            matchedContainer.appendChild(badge);
+          });
+          item.appendChild(matchedContainer);
+        }
 
         if (res.nearMatches && res.nearMatches.length > 0) {
           const nearContainer = document.createElement('div');

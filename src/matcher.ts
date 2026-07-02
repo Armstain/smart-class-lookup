@@ -17,6 +17,84 @@ function getOrLoadSource(entry: FileIndexEntry): string {
   }
 }
 
+// Split a source line into class-name-like tokens. The delimiters are the characters that
+// can't appear inside a class token (whitespace, quotes, the braces/parens/angle brackets
+// JSX uses, commas, etc.). Variant colons, arbitrary-value brackets, "!" important flags and
+// "/" opacity stay intact, so tokens like hover:bg-red-500, w-[30px], !mt-4 and border-white/50
+// compare cleanly against the query. Non-class identifiers (className, div, const) are harmless
+// since we only ever intersect against the known query set.
+function classTokensOnLine(line: string): Set<string> {
+  return new Set(line.split(/[\s"'`{}()<>=,;]+/).filter(Boolean));
+}
+
+// Recompute a result's displayed locations by scanning the real source, counting how many
+// query classes actually co-occur on each line, and keeping only the lines tied at the true
+// maximum. The class-based index caps locations at 8 per class (see indexer), so a deep line
+// holding the full combo can be undercounted and lose to shallower lines that share only a few
+// common classes. Reading the source here — done only for the handful of displayed results —
+// gives an accurate count and drops those "technically matched, practically irrelevant" lines.
+function refineLocations(
+  result: SearchResult,
+  inputClasses: string[],
+  entry: FileIndexEntry | undefined
+): void {
+  if (!entry) {
+    return;
+  }
+  const source = getOrLoadSource(entry);
+  if (!source) {
+    return;
+  }
+
+  const querySet = new Set(inputClasses);
+  const lines = source.split(/\r?\n/);
+
+  let best = 0;
+  const perLine: { line: number; count: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const tokens = classTokensOnLine(lines[i]);
+    let count = 0;
+    for (const cls of querySet) {
+      if (tokens.has(cls)) {
+        count++;
+      }
+    }
+    if (count > 0) {
+      perLine.push({ line: i, count });
+      if (count > best) {
+        best = count;
+      }
+    }
+  }
+
+  // No whole-token overlap (e.g. a file matched only via arbitrary-value near-matches, whose
+  // bracket contents differ) — leave the index-derived locations untouched.
+  if (best === 0) {
+    return;
+  }
+
+  result.locations = perLine
+    .filter((p) => p.count === best)
+    .slice(0, MAX_LOCATIONS_PER_RESULT)
+    .map((p) => {
+      const lineText = lines[p.line];
+      let column = 0;
+      for (const cls of querySet) {
+        const idx = lineText.indexOf(cls);
+        if (idx !== -1 && (column === 0 || idx < column)) {
+          column = idx;
+        }
+      }
+      return {
+        file: result.file,
+        line: p.line,
+        column,
+        context: lineText.trim().slice(0, 140),
+      };
+    });
+  result.maxLineMatches = best;
+}
+
 export function searchTextInFile(
   query: string,
   entry: FileIndexEntry
@@ -202,5 +280,13 @@ export function rankFiles(
     return a.file.localeCompare(b.file);
   });
 
-  return options.maxResults ? results.slice(0, options.maxResults) : results;
+  const sliced = options.maxResults ? results.slice(0, options.maxResults) : results;
+
+  // Re-derive displayed locations from the real source, but only for the results we return —
+  // this is where the accurate per-line counts matter and the source-read cost is bounded.
+  for (const result of sliced) {
+    refineLocations(result, inputClasses, index.get(result.file));
+  }
+
+  return sliced;
 }
