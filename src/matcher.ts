@@ -73,7 +73,12 @@ function refineLocations(
     return;
   }
 
-  result.locations = perLine
+  const existingTextSearchLocs = result.locations.filter((loc) => {
+    const tokens = classTokensOnLine(lines[loc.line]);
+    return !inputClasses.some((cls) => tokens.has(cls));
+  });
+
+  const classLocs = perLine
     .filter((p) => p.count === best)
     .slice(0, MAX_LOCATIONS_PER_RESULT)
     .map((p) => {
@@ -92,6 +97,14 @@ function refineLocations(
         context: lineText.trim().slice(0, 140),
       };
     });
+
+  const merged = [...existingTextSearchLocs];
+  for (const loc of classLocs) {
+    if (!merged.some((l) => l.line === loc.line)) {
+      merged.push(loc);
+    }
+  }
+  result.locations = merged.slice(0, MAX_LOCATIONS_PER_RESULT);
   result.maxLineMatches = best;
 }
 

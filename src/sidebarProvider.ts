@@ -5,6 +5,7 @@ import { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePaste
 import { rankFiles } from "./matcher";
 import { openAndHighlight, clearDecorations } from "./quickPick";
 import type { SearchResult } from "./types";
+import { computeReplacements } from "./classReplacer";
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
@@ -89,6 +90,90 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           });
 
           webviewView.webview.postMessage({ type: "results", results: webviewResults });
+          break;
+        }
+        case "replace": {
+          const target = data.target as string;
+          const replacement = data.replacement as string;
+          if (!target || !this.indexer) return;
+
+          const isStyle = isStyleInput(target);
+          const targetClasses = isStyle ? parsePastedStyleList(target) : parsePastedClassList(target);
+          const replacementClasses = isStyle ? parsePastedStyleList(replacement) : parsePastedClassList(replacement);
+
+          if (targetClasses.length === 0) {
+            vscode.window.showWarningMessage("Smart Class Search: invalid target classes.");
+            return;
+          }
+
+          const workspaceEdit = new vscode.WorkspaceEdit();
+          let totalOccurrences = 0;
+          let filesCount = 0;
+
+          const targetSet = new Set(targetClasses.map((t) => t.toLowerCase()));
+          const index = this.indexer.getIndex();
+          const matchedFiles: string[] = [];
+
+          for (const entry of index.values()) {
+            const hasMatch = Array.from(entry.classes).some((c) => targetSet.has(c.toLowerCase()));
+            if (hasMatch) {
+              matchedFiles.push(entry.file);
+            }
+          }
+
+          if (matchedFiles.length === 0) {
+            vscode.window.showInformationMessage("Smart Class Replace: No matching files found in the index.");
+            return;
+          }
+
+          for (const file of matchedFiles) {
+            const uri = vscode.Uri.file(file);
+            let document: vscode.TextDocument;
+            try {
+              document = await vscode.workspace.openTextDocument(uri);
+            } catch {
+              continue;
+            }
+
+            const source = document.getText();
+            const edits = computeReplacements(source, targetClasses, replacementClasses);
+            if (edits.length > 0) {
+              filesCount++;
+              totalOccurrences += edits.length;
+              for (const edit of edits) {
+                const range = new vscode.Range(
+                  document.positionAt(edit.start),
+                  document.positionAt(edit.end)
+                );
+                workspaceEdit.replace(uri, range, edit.newText);
+              }
+            }
+          }
+
+          if (totalOccurrences === 0) {
+            vscode.window.showInformationMessage("Smart Class Replace: No matching class occurrences found in file code.");
+            return;
+          }
+
+          const confirm = await vscode.window.showWarningMessage(
+            `Are you sure you want to replace '${target}' with '${replacement}' in ${filesCount} file(s) (${totalOccurrences} occurrence(s))?`,
+            { modal: true },
+            "Replace"
+          );
+
+          if (confirm !== "Replace") {
+            return;
+          }
+
+          const success = await vscode.workspace.applyEdit(workspaceEdit);
+          if (success) {
+            vscode.window.showInformationMessage(
+              `Successfully replaced '${target}' with '${replacement}' in ${filesCount} file(s) (${totalOccurrences} occurrence(s)).`
+            );
+            webviewView.webview.postMessage({ type: "resultsUpdated" });
+          } else {
+            vscode.window.showErrorMessage("Smart Class Replace: Failed to apply edits.");
+          }
           break;
         }
         case "preview": {
@@ -207,6 +292,33 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     input[type="text"]:focus {
       border: 1px solid var(--vscode-focusBorder, #007acc);
+    }
+
+    .replace-wrapper {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    .replace-wrapper input[type="text"] {
+      flex-grow: 1;
+      padding-right: 8px;
+    }
+
+    .replace-btn {
+      background: var(--vscode-button-background, #007acc);
+      color: var(--vscode-button-foreground, #ffffff);
+      border: none;
+      padding: 6px 12px;
+      border-radius: 2px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .replace-btn:hover {
+      background: var(--vscode-button-hoverBackground, #0062a3);
     }
 
     .clear-btn {
@@ -449,6 +561,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       <input type="text" id="search-input" placeholder="Paste class list or HTML element..." autocomplete="off">
       <button class="clear-btn" id="clear-btn" title="Clear input">×</button>
     </div>
+    <div class="input-wrapper replace-wrapper">
+      <input type="text" id="replace-input" placeholder="Replace with..." autocomplete="off">
+      <button class="replace-btn" id="replace-btn" title="Replace all occurrences">Replace All</button>
+    </div>
     <div class="toggle-container">
       <label class="toggle-label">
         <input type="checkbox" id="text-search-toggle" checked>
@@ -472,12 +588,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const vscode = acquireVsCodeApi();
     const searchInput = document.getElementById('search-input');
     const clearBtn = document.getElementById('clear-btn');
+    const replaceInput = document.getElementById('replace-input');
+    const replaceBtn = document.getElementById('replace-btn');
     const statusText = document.getElementById('status-text');
     const resultsContainer = document.getElementById('results-container');
     const textSearchToggle = document.getElementById('text-search-toggle');
     const hoverPreviewToggle = document.getElementById('hover-preview-toggle');
 
     let currentFileCount = 0;
+
+    replaceBtn.addEventListener('click', () => {
+      const target = searchInput.value;
+      const replacement = replaceInput.value;
+      if (target.trim()) {
+        vscode.postMessage({
+          type: 'replace',
+          target: target,
+          replacement: replacement
+        });
+      }
+    });
 
     vscode.postMessage({ type: 'readClipboard' });
 
@@ -524,6 +654,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       switch (message.type) {
         case 'results':
           renderResults(message.results);
+          break;
+        case 'resultsUpdated':
+          vscode.postMessage({
+            type: 'search',
+            value: searchInput.value,
+            textSearchEnabled: textSearchToggle.checked
+          });
           break;
         case 'indexUpdated':
         case 'viewVisible':
