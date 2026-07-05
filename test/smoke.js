@@ -277,5 +277,48 @@ assert(
   new Set(dupGroups[0].occurrences.map((o) => o.file)).size === 2,
   "duplicate group spans 2 distinct files"
 );
+// --- Test 13: AST Class Replacement ---
+const { computeReplacements } = require("../out/classReplacer");
+
+function applyEdits(source, edits) {
+  let result = source;
+  for (const edit of edits) {
+    result = result.slice(0, edit.start) + edit.newText + result.slice(edit.end);
+  }
+  return result;
+}
+
+// Case A: Simple replacement in className
+const srcReplaceA = `<div className="flex bg-red-500 p-4" />`;
+const editsA = computeReplacements(srcReplaceA, ["bg-red-500"], ["bg-blue-500"]);
+const resultA = applyEdits(srcReplaceA, editsA);
+assert(resultA === `<div className="flex bg-blue-500 p-4" />`, "simple replacement inside className works");
+
+// Case B: Replacement inside ternary/conditional
+const srcReplaceB = `<div className={mobile ? "px-5" : "px-4"} />`;
+const editsB = computeReplacements(srcReplaceB, ["px-5"], ["px-6"]);
+const resultB = applyEdits(srcReplaceB, editsB);
+assert(resultB === `<div className={mobile ? "px-6" : "px-4"} />`, "replacement inside JSX ternary works");
+
+// Case C: Replacement inside template literal
+const srcReplaceC = "<span className={`bg-white ${isOpen ? 'shadow-md' : ''}`}>x</span>";
+const editsC = computeReplacements(srcReplaceC, ["bg-white"], ["bg-black"]);
+const resultC = applyEdits(srcReplaceC, editsC);
+assert(resultC === "<span className={`bg-black ${isOpen ? 'shadow-md' : ''}`}>x</span>", "replacement inside template literal works");
+
+// Case D: Deleting a class (replacement is empty)
+const srcReplaceD = `<div className="flex bg-red-500 p-4" />`;
+const editsD = computeReplacements(srcReplaceD, ["bg-red-500"], []);
+const resultD = applyEdits(srcReplaceD, editsD);
+assert(resultD === `<div className="flex p-4" />`, "deleting a class works");
+
+// Case E: Replacing variables
+const srcReplaceE = `
+const styles = cn("p-4", "bg-red-500");
+const element = <div className={styles} />;
+`;
+const editsE = computeReplacements(srcReplaceE, ["bg-red-500"], ["bg-blue-500"]);
+const resultE = applyEdits(srcReplaceE, editsE);
+assert(resultE.includes('cn("p-4", "bg-blue-500")'), "replacing local variable class declarations works");
 
 console.log("\nDone.");

@@ -2,7 +2,7 @@
   "name": "smart-class-lookup",
   "displayName": "Smart Class Search",
   "description": "Paste classes copied from DevTools and instantly find the matching component in your workspace. Built for Tailwind — supports cn(), clsx(), classnames(), template literals, arrays, ternaries, and conditional classNames.",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "publisher": "nazmul-hossain-adnan",
   "icon": "resources/logo.png",
   "repository": {
@@ -60,6 +60,11 @@
       {
         "command": "smartClassLookup.findDuplicates",
         "title": "Smart Class Search: Find Duplicate Components",
+        "category": "Smart Class Search"
+      },
+      {
+        "command": "smartClassLookup.replace",
+        "title": "Smart Class Search: Replace Class...",
         "category": "Smart Class Search"
       }
     ],
