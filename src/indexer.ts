@@ -34,6 +34,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
   private building: Promise<void> | undefined;
   public fileCount = 0;
   public lastBuildMs = 0;
+  private configWatcherRegistered = false;
 
   constructor(
     private readonly output: vscode.OutputChannel,
@@ -89,6 +90,8 @@ export class WorkspaceIndexer implements vscode.Disposable {
 
     const CONCURRENCY = 16;
     let cursor = 0;
+    // Skip the save below when a fully-cached reload changes nothing.
+    let changed = !cacheValid;
 
     const worker = async () => {
       while (cursor < uris.length) {
@@ -101,6 +104,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
             stat = await vscode.workspace.fs.stat(uri);
           } catch {
             this.removeFile(filePath);
+            changed = true;
             continue;
           }
           const cached = this.index.get(filePath);
@@ -110,6 +114,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
         }
 
         await this.indexFile(uri);
+        changed = true;
       }
     };
 
@@ -119,6 +124,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
     for (const filePath of this.index.keys()) {
       if (!uriSet.has(filePath)) {
         this.removeFile(filePath);
+        changed = true;
       }
     }
 
@@ -128,7 +134,9 @@ export class WorkspaceIndexer implements vscode.Disposable {
       `[index] built index for ${this.fileCount} files with classes in ${this.lastBuildMs}ms`
     );
 
-    await this.saveCache(include, exclude);
+    if (changed) {
+      await this.saveCache(include, exclude);
+    }
 
     this.onDidUpdateEmitter.fire();
   }
@@ -222,6 +230,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
   }
 
   public startWatching(): void {
+    this.watcher?.dispose();
     const { include } = this.getConfig();
     this.watcher = vscode.workspace.createFileSystemWatcher(include);
 
@@ -233,18 +242,25 @@ export class WorkspaceIndexer implements vscode.Disposable {
         this.removeFile(uri.fsPath);
         this.fileCount = this.index.size;
         this.onDidUpdateEmitter.fire();
-      }),
-      vscode.workspace.onDidChangeConfiguration((e) => {
-        if (
-          e.affectsConfiguration("smartClassLookup.include") ||
-          e.affectsConfiguration("smartClassLookup.exclude")
-        ) {
-          this.watcher?.dispose();
-          this.startWatching();
-          void this.buildFullIndex();
-        }
       })
     );
+
+    // Registered once — startWatching() re-runs on config changes, and re-adding this
+    // listener each time would stack duplicate rebuilds.
+    if (!this.configWatcherRegistered) {
+      this.configWatcherRegistered = true;
+      this.disposables.push(
+        vscode.workspace.onDidChangeConfiguration((e) => {
+          if (
+            e.affectsConfiguration("smartClassLookup.include") ||
+            e.affectsConfiguration("smartClassLookup.exclude")
+          ) {
+            this.startWatching();
+            void this.buildFullIndex();
+          }
+        })
+      );
+    }
   }
 
   private async handleFileChanged(uri: vscode.Uri): Promise<void> {

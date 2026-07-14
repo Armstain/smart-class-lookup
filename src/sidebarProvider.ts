@@ -5,7 +5,7 @@ import { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePaste
 import { rankFiles } from "./matcher";
 import { openAndHighlight, clearDecorations } from "./quickPick";
 import type { SearchResult } from "./types";
-import { computeReplacements } from "./classReplacer";
+import { filterCandidateFiles, collectReplacements, applySelectedEdits, type AppliedEdit } from "./replacePreview";
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
@@ -48,7 +48,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       switch (data.type) {
         case "search": {
           const rawInput = data.value as string;
-          const textSearchEnabled = data.textSearchEnabled !== false;
           if (!rawInput.trim()) {
             webviewView.webview.postMessage({ type: "results", results: [] });
             return;
@@ -62,7 +61,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const results = rankFiles(inputClasses, this.indexer.getIndex(), {
             minScore,
             maxResults,
-            rawInput: textSearchEnabled ? rawInput : undefined
+            // Style inputs match structurally, not as literal text.
+            rawInput: isStyle ? undefined : rawInput
           });
 
           // Map results to webview-friendly format (handling Set/Map serialization)
@@ -76,6 +76,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               fileName: path.basename(r.file),
               relativePath,
               score: r.score,
+              matchType: r.matchType ?? "class",
+              textScore: r.textScore,
               matchedCount: r.matchedCount,
               totalInputCount: r.totalInputCount,
               matchedClasses: r.matchedClasses,
@@ -92,7 +94,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           webviewView.webview.postMessage({ type: "results", results: webviewResults });
           break;
         }
-        case "replace": {
+        case "previewReplace": {
           const target = data.target as string;
           const replacement = data.replacement as string;
           if (!target || !this.indexer) return;
@@ -106,69 +108,88 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             return;
           }
 
-          const workspaceEdit = new vscode.WorkspaceEdit();
-          let totalOccurrences = 0;
-          let filesCount = 0;
-
-          const targetSet = new Set(targetClasses.map((t) => t.toLowerCase()));
           const index = this.indexer.getIndex();
-          const matchedFiles: string[] = [];
-
-          for (const entry of index.values()) {
-            const hasMatch = Array.from(entry.classes).some((c) => targetSet.has(c.toLowerCase()));
-            if (hasMatch) {
-              matchedFiles.push(entry.file);
-            }
-          }
-
-          if (matchedFiles.length === 0) {
-            vscode.window.showInformationMessage("Smart Class Replace: No matching files found in the index.");
+          const candidateFiles = filterCandidateFiles(index, targetClasses);
+          if (candidateFiles.length === 0) {
+            webviewView.webview.postMessage({ type: "replacePreview", target, replacement, occurrences: [] });
             return;
           }
 
-          for (const file of matchedFiles) {
+          const sources = await this.readSources(candidateFiles);
+          const occurrences = collectReplacements(sources, targetClasses, replacementClasses);
+
+          const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+          const webviewOccurrences = occurrences.map((o) => ({
+            key: o.key,
+            file: o.file,
+            fileName: path.basename(o.file),
+            relativePath: workspaceFolder ? path.relative(workspaceFolder.uri.fsPath, o.file) : o.file,
+            line: o.line,
+            before: o.before,
+            after: o.after,
+          }));
+
+          webviewView.webview.postMessage({
+            type: "replacePreview",
+            target,
+            replacement,
+            occurrences: webviewOccurrences,
+          });
+          break;
+        }
+        case "applyReplace": {
+          const target = data.target as string;
+          const replacement = data.replacement as string;
+          const selectedKeys = new Set<string>((data.selectedKeys as string[]) ?? []);
+          if (!target || !this.indexer || selectedKeys.size === 0) return;
+
+          const isStyle = isStyleInput(target);
+          const targetClasses = isStyle ? parsePastedStyleList(target) : parsePastedClassList(target);
+          const replacementClasses = isStyle ? parsePastedStyleList(replacement) : parsePastedClassList(replacement);
+
+          if (targetClasses.length === 0) {
+            vscode.window.showWarningMessage("Smart Class Search: invalid target classes.");
+            return;
+          }
+
+          const index = this.indexer.getIndex();
+          const candidateFiles = filterCandidateFiles(index, targetClasses);
+          // Re-read current source rather than reusing the preview: a changed file's occurrence
+          // won't reproduce the same key, so it's dropped and reported as skipped.
+          const sources = await this.readSources(candidateFiles);
+          const { applied, skippedCount } = applySelectedEdits(sources, targetClasses, replacementClasses, selectedKeys);
+
+          if (applied.length === 0) {
+            vscode.window.showInformationMessage(
+              skippedCount > 0
+                ? "Smart Class Replace: selected occurrences are no longer present (file changed since preview) — nothing applied."
+                : "Smart Class Replace: nothing selected to apply."
+            );
+            return;
+          }
+
+          const editsByFile = new Map<string, AppliedEdit[]>();
+          for (const edit of applied) {
+            const list = editsByFile.get(edit.file) ?? [];
+            list.push(edit);
+            editsByFile.set(edit.file, list);
+          }
+
+          const workspaceEdit = new vscode.WorkspaceEdit();
+          for (const [file, edits] of editsByFile) {
             const uri = vscode.Uri.file(file);
-            let document: vscode.TextDocument;
-            try {
-              document = await vscode.workspace.openTextDocument(uri);
-            } catch {
-              continue;
+            const document = await vscode.workspace.openTextDocument(uri);
+            for (const edit of edits) {
+              const range = new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end));
+              workspaceEdit.replace(uri, range, edit.newText);
             }
-
-            const source = document.getText();
-            const edits = computeReplacements(source, targetClasses, replacementClasses);
-            if (edits.length > 0) {
-              filesCount++;
-              totalOccurrences += edits.length;
-              for (const edit of edits) {
-                const range = new vscode.Range(
-                  document.positionAt(edit.start),
-                  document.positionAt(edit.end)
-                );
-                workspaceEdit.replace(uri, range, edit.newText);
-              }
-            }
-          }
-
-          if (totalOccurrences === 0) {
-            vscode.window.showInformationMessage("Smart Class Replace: No matching class occurrences found in file code.");
-            return;
-          }
-
-          const confirm = await vscode.window.showWarningMessage(
-            `Are you sure you want to replace '${target}' with '${replacement}' in ${filesCount} file(s) (${totalOccurrences} occurrence(s))?`,
-            { modal: true },
-            "Replace"
-          );
-
-          if (confirm !== "Replace") {
-            return;
           }
 
           const success = await vscode.workspace.applyEdit(workspaceEdit);
           if (success) {
+            const skippedNote = skippedCount > 0 ? ` (${skippedCount} skipped — file changed since preview)` : "";
             vscode.window.showInformationMessage(
-              `Successfully replaced '${target}' with '${replacement}' in ${filesCount} file(s) (${totalOccurrences} occurrence(s)).`
+              `Smart Class Replace: applied ${applied.length} occurrence(s) in ${editsByFile.size} file(s)${skippedNote}.`
             );
             webviewView.webview.postMessage({ type: "resultsUpdated" });
           } else {
@@ -234,6 +255,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         webviewView.webview.postMessage({ type: "viewVisible", fileCount: this.indexer.fileCount });
       }
     });
+  }
+
+  // Reads current document text, including unsaved editor buffers, skipping unreadable files.
+  private async readSources(files: string[]): Promise<Map<string, string>> {
+    const sources = new Map<string, string>();
+    for (const file of files) {
+      try {
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+        sources.set(file, document.getText());
+      } catch {
+        // skip
+      }
+    }
+    return sources;
   }
 
   private getHtmlForWebview(webview: vscode.Webview): string {
@@ -416,6 +451,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-charts-green, #89d185);
       white-space: nowrap;
       flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .match-percent.text-match {
+      color: var(--vscode-charts-blue, #3794ff);
+    }
+
+    .match-tag {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 1px 4px;
+      border-radius: 2px;
+      background: rgba(55, 148, 255, 0.15);
+      color: var(--vscode-charts-blue, #3794ff);
+      font-weight: 600;
     }
 
     .file-path {
@@ -553,6 +606,167 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       text-align: center;
       color: var(--vscode-descriptionForeground, #858585);
     }
+
+    .replace-preview-container {
+      display: flex;
+      flex-direction: column;
+      flex-grow: 1;
+      min-height: 0;
+    }
+
+    .replace-preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--vscode-widget-border, #454545);
+      flex-shrink: 0;
+    }
+
+    .replace-preview-title {
+      font-size: 12px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .replace-preview-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .replace-apply-btn, .replace-cancel-btn {
+      border: none;
+      padding: 4px 10px;
+      border-radius: 2px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .replace-apply-btn {
+      background: var(--vscode-button-background, #007acc);
+      color: var(--vscode-button-foreground, #ffffff);
+    }
+
+    .replace-apply-btn:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground, #0062a3);
+    }
+
+    .replace-apply-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .replace-cancel-btn {
+      background: var(--vscode-button-secondaryBackground, #3a3d41);
+      color: var(--vscode-button-secondaryForeground, #cccccc);
+    }
+
+    .replace-cancel-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground, #45494e);
+    }
+
+    .replace-preview-list {
+      flex-grow: 1;
+      overflow-y: auto;
+      margin: 0 -10px;
+      padding: 8px 10px 0;
+    }
+
+    .replace-file-group {
+      margin-bottom: 10px;
+    }
+
+    .replace-file-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 2px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .replace-file-header input[type="checkbox"] {
+      cursor: pointer;
+      margin: 0;
+      flex-shrink: 0;
+    }
+
+    .replace-file-name {
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .replace-file-path {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground, #858585);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .replace-occurrence {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 3px 2px 3px 20px;
+      cursor: pointer;
+      user-select: none;
+      border-radius: 2px;
+    }
+
+    .replace-occurrence:hover {
+      background-color: var(--vscode-list-hoverBackground, #2a2d2e);
+    }
+
+    .replace-occurrence input[type="checkbox"] {
+      cursor: pointer;
+      margin: 2px 0 0;
+      flex-shrink: 0;
+    }
+
+    .replace-occurrence-body {
+      min-width: 0;
+      flex-grow: 1;
+    }
+
+    .replace-occurrence-line {
+      font-size: 10px;
+      color: var(--vscode-textLink-foreground, #3794ff);
+      font-weight: bold;
+      margin-right: 4px;
+    }
+
+    .replace-occurrence-snippet {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: block;
+    }
+
+    .replace-before {
+      color: var(--vscode-errorForeground, #f48771);
+      text-decoration: line-through;
+      opacity: 0.85;
+    }
+
+    .replace-arrow {
+      color: var(--vscode-descriptionForeground, #858585);
+      margin: 0 4px;
+    }
+
+    .replace-after {
+      color: var(--vscode-charts-green, #89d185);
+    }
   </style>
 </head>
 <body>
@@ -563,13 +777,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </div>
     <div class="input-wrapper replace-wrapper">
       <input type="text" id="replace-input" placeholder="Replace with..." autocomplete="off">
-      <button class="replace-btn" id="replace-btn" title="Replace all occurrences">Replace All</button>
-    </div>
-    <div class="toggle-container">
-      <label class="toggle-label">
-        <input type="checkbox" id="text-search-toggle" checked>
-        <span>Include general text search</span>
-      </label>
+      <button class="replace-btn" id="replace-btn" title="Preview occurrences before replacing">Replace…</button>
     </div>
     <div class="toggle-container">
       <label class="toggle-label">
@@ -584,6 +792,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div class="no-results">Type or paste classes to search</div>
   </div>
 
+  <div class="replace-preview-container" id="replace-preview-container" style="display:none;">
+    <div class="replace-preview-header">
+      <div class="replace-preview-title" id="replace-preview-title"></div>
+      <div class="replace-preview-actions">
+        <button class="replace-cancel-btn" id="replace-cancel-btn">Cancel</button>
+        <button class="replace-apply-btn" id="replace-apply-btn">Apply (0)</button>
+      </div>
+    </div>
+    <div class="replace-preview-list" id="replace-preview-list"></div>
+  </div>
+
   <script>
     const vscode = acquireVsCodeApi();
     const searchInput = document.getElementById('search-input');
@@ -592,32 +811,50 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const replaceBtn = document.getElementById('replace-btn');
     const statusText = document.getElementById('status-text');
     const resultsContainer = document.getElementById('results-container');
-    const textSearchToggle = document.getElementById('text-search-toggle');
     const hoverPreviewToggle = document.getElementById('hover-preview-toggle');
+    const replacePreviewContainer = document.getElementById('replace-preview-container');
+    const replacePreviewTitle = document.getElementById('replace-preview-title');
+    const replacePreviewList = document.getElementById('replace-preview-list');
+    const replaceCancelBtn = document.getElementById('replace-cancel-btn');
+    const replaceApplyBtn = document.getElementById('replace-apply-btn');
 
     let currentFileCount = 0;
+    let selectedReplaceKeys = new Set();
+    let currentReplaceTarget = '';
+    let currentReplaceReplacement = '';
 
     replaceBtn.addEventListener('click', () => {
       const target = searchInput.value;
       const replacement = replaceInput.value;
       if (target.trim()) {
         vscode.postMessage({
-          type: 'replace',
+          type: 'previewReplace',
           target: target,
           replacement: replacement
         });
       }
     });
 
-    vscode.postMessage({ type: 'readClipboard' });
+    function closeReplacePreview() {
+      replacePreviewContainer.style.display = 'none';
+      resultsContainer.style.display = '';
+    }
 
-    textSearchToggle.addEventListener('change', () => {
+    replaceCancelBtn.addEventListener('click', () => {
+      closeReplacePreview();
+    });
+
+    replaceApplyBtn.addEventListener('click', () => {
+      if (selectedReplaceKeys.size === 0) return;
       vscode.postMessage({
-        type: 'search',
-        value: searchInput.value,
-        textSearchEnabled: textSearchToggle.checked
+        type: 'applyReplace',
+        target: currentReplaceTarget,
+        replacement: currentReplaceReplacement,
+        selectedKeys: Array.from(selectedReplaceKeys)
       });
     });
+
+    vscode.postMessage({ type: 'readClipboard' });
 
     hoverPreviewToggle.addEventListener('change', () => {
       vscode.postMessage({ type: 'togglePreview', enabled: hoverPreviewToggle.checked });
@@ -625,27 +862,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     let debounceTimer;
     searchInput.addEventListener('input', (e) => {
+      // Search box doubles as the replace "find" field — an open preview is now stale.
+      if (replacePreviewContainer.style.display !== 'none') {
+        closeReplacePreview();
+      }
       const val = e.target.value;
       clearBtn.style.display = val ? 'flex' : 'none';
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        vscode.postMessage({
-          type: 'search',
-          value: val,
-          textSearchEnabled: textSearchToggle.checked
-        });
+        vscode.postMessage({ type: 'search', value: val });
       }, 100);
+    });
+
+    replaceInput.addEventListener('input', () => {
+      if (replacePreviewContainer.style.display !== 'none') {
+        closeReplacePreview();
+      }
     });
 
     clearBtn.addEventListener('click', () => {
       searchInput.value = '';
       clearBtn.style.display = 'none';
       searchInput.focus();
-      vscode.postMessage({
-        type: 'search',
-        value: '',
-        textSearchEnabled: textSearchToggle.checked
-      });
+      vscode.postMessage({ type: 'search', value: '' });
       vscode.postMessage({ type: 'clearPreview' });
     });
 
@@ -656,11 +895,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           renderResults(message.results);
           break;
         case 'resultsUpdated':
-          vscode.postMessage({
-            type: 'search',
-            value: searchInput.value,
-            textSearchEnabled: textSearchToggle.checked
-          });
+          closeReplacePreview();
+          vscode.postMessage({ type: 'search', value: searchInput.value });
+          break;
+        case 'replacePreview':
+          renderReplacePreview(message.target, message.replacement, message.occurrences);
           break;
         case 'indexUpdated':
         case 'viewVisible':
@@ -674,11 +913,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           if (!searchInput.value.trim()) {
             searchInput.value = message.text;
             clearBtn.style.display = 'flex';
-            vscode.postMessage({
-              type: 'search',
-              value: message.text,
-              textSearchEnabled: textSearchToggle.checked
-            });
+            vscode.postMessage({ type: 'search', value: message.text });
           }
           break;
       }
@@ -708,7 +943,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         const percent = document.createElement('div');
         percent.className = 'match-percent';
-        percent.textContent = \`\${Math.round(res.score * 100)}% match\`;
+        if (res.matchType === 'text') {
+          // No class overlap, so a "% match" would be misleading.
+          percent.classList.add('text-match');
+          percent.textContent = 'text match';
+        } else {
+          const label = document.createElement('span');
+          label.textContent = \`\${Math.round(res.score * 100)}% match\`;
+          percent.appendChild(label);
+          if (res.matchType === 'both') {
+            // Also matched literally as text.
+            const tag = document.createElement('span');
+            tag.className = 'match-tag';
+            tag.textContent = 'text';
+            percent.appendChild(tag);
+          }
+        }
 
         const copyPathBtn = document.createElement('button');
         copyPathBtn.className = 'copy-btn';
@@ -730,7 +980,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         item.appendChild(header);
         item.appendChild(path);
 
-        if (res.matchedClasses && res.matchedClasses.length > 0) {
+        if (res.matchType !== 'text' && res.matchedClasses && res.matchedClasses.length > 0) {
           const matchedContainer = document.createElement('div');
           matchedContainer.className = 'matched-list';
 
@@ -848,6 +1098,163 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       resultsContainer.addEventListener('mouseleave', () => {
         vscode.postMessage({ type: 'clearPreview' });
       });
+    }
+
+    function updateReplaceApplyBtn() {
+      replaceApplyBtn.textContent = \`Apply (\${selectedReplaceKeys.size})\`;
+      replaceApplyBtn.disabled = selectedReplaceKeys.size === 0;
+    }
+
+    function renderReplacePreview(target, replacement, occurrences) {
+      currentReplaceTarget = target;
+      currentReplaceReplacement = replacement;
+      selectedReplaceKeys = new Set(occurrences.map((o) => o.key));
+
+      resultsContainer.style.display = 'none';
+      replacePreviewContainer.style.display = 'flex';
+      replacePreviewTitle.textContent = \`Replace "\${target}" → "\${replacement || '(delete)'}"\`;
+      replacePreviewList.innerHTML = '';
+
+      if (occurrences.length === 0) {
+        replacePreviewList.innerHTML = '<div class="no-results">No occurrences to replace.</div>';
+        updateReplaceApplyBtn();
+        return;
+      }
+
+      // Group by file, preserving first-seen order.
+      const groups = [];
+      const groupByFile = new Map();
+      occurrences.forEach((o) => {
+        let group = groupByFile.get(o.file);
+        if (!group) {
+          group = { fileName: o.fileName, relativePath: o.relativePath, occurrences: [] };
+          groupByFile.set(o.file, group);
+          groups.push(group);
+        }
+        group.occurrences.push(o);
+      });
+
+      groups.forEach((group) => {
+        const groupEl = document.createElement('div');
+        groupEl.className = 'replace-file-group';
+
+        const header = document.createElement('div');
+        header.className = 'replace-file-header';
+
+        const fileCheckbox = document.createElement('input');
+        fileCheckbox.type = 'checkbox';
+
+        const names = document.createElement('div');
+        names.style.minWidth = '0';
+        names.style.flexGrow = '1';
+
+        const fileNameEl = document.createElement('div');
+        fileNameEl.className = 'replace-file-name';
+        fileNameEl.textContent = \`📄 \${group.fileName}\`;
+
+        const filePathEl = document.createElement('div');
+        filePathEl.className = 'replace-file-path';
+        filePathEl.textContent = group.relativePath;
+
+        names.appendChild(fileNameEl);
+        names.appendChild(filePathEl);
+        header.appendChild(fileCheckbox);
+        header.appendChild(names);
+        groupEl.appendChild(header);
+
+        // Closures over each checkbox avoid building a CSS selector from occurrence text,
+        // which can contain quotes/brackets.
+        const rowCheckboxes = [];
+
+        function refreshFileCheckbox() {
+          const checkedCount = group.occurrences.filter((o) => selectedReplaceKeys.has(o.key)).length;
+          fileCheckbox.checked = checkedCount === group.occurrences.length;
+          fileCheckbox.indeterminate = checkedCount > 0 && checkedCount < group.occurrences.length;
+        }
+
+        group.occurrences.forEach((o) => {
+          const row = document.createElement('div');
+          row.className = 'replace-occurrence';
+
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = selectedReplaceKeys.has(o.key);
+
+          const body = document.createElement('div');
+          body.className = 'replace-occurrence-body';
+
+          const snippet = document.createElement('span');
+          snippet.className = 'replace-occurrence-snippet';
+
+          const lineLabel = document.createElement('span');
+          lineLabel.className = 'replace-occurrence-line';
+          lineLabel.textContent = \`L\${o.line + 1}\`;
+
+          const beforeSpan = document.createElement('span');
+          beforeSpan.className = 'replace-before';
+          beforeSpan.textContent = o.before;
+
+          const arrow = document.createElement('span');
+          arrow.className = 'replace-arrow';
+          arrow.textContent = '→';
+
+          const afterSpan = document.createElement('span');
+          afterSpan.className = 'replace-after';
+          afterSpan.textContent = o.after || '(removed)';
+
+          snippet.appendChild(lineLabel);
+          snippet.appendChild(beforeSpan);
+          snippet.appendChild(arrow);
+          snippet.appendChild(afterSpan);
+          body.appendChild(snippet);
+
+          row.appendChild(checkbox);
+          row.appendChild(body);
+
+          checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+              selectedReplaceKeys.add(o.key);
+            } else {
+              selectedReplaceKeys.delete(o.key);
+            }
+            refreshFileCheckbox();
+            updateReplaceApplyBtn();
+          });
+
+          row.addEventListener('click', (e) => {
+            if (e.target === checkbox) return;
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change'));
+          });
+
+          rowCheckboxes.push(checkbox);
+          groupEl.appendChild(row);
+        });
+
+        fileCheckbox.addEventListener('change', () => {
+          const shouldSelect = fileCheckbox.checked;
+          group.occurrences.forEach((o, i) => {
+            if (shouldSelect) {
+              selectedReplaceKeys.add(o.key);
+            } else {
+              selectedReplaceKeys.delete(o.key);
+            }
+            rowCheckboxes[i].checked = shouldSelect;
+          });
+          updateReplaceApplyBtn();
+        });
+
+        header.addEventListener('click', (e) => {
+          if (e.target === fileCheckbox) return;
+          fileCheckbox.checked = !fileCheckbox.checked;
+          fileCheckbox.dispatchEvent(new Event('change'));
+        });
+
+        refreshFileCheckbox();
+        replacePreviewList.appendChild(groupEl);
+      });
+
+      updateReplaceApplyBtn();
     }
   </script>
 </body>

@@ -167,6 +167,23 @@ assert(
   `parsePastedClassList extracts classes from CSS selectors (got [${fromDot.join(", ")}])`
 );
 
+// A raw pasted cn() fragment must not leak bare JS identifiers/operators as class names.
+const fromPastedFragment = parsePastedClassList(
+  '"p-6 border rounded-lg",\n  isActive ? "bg-red-500 text-white" : "bg-white text-gray-800",'
+);
+for (const cls of ["p-6", "border", "rounded-lg", "bg-red-500", "text-white", "bg-white", "text-gray-800"]) {
+  assert(
+    fromPastedFragment.includes(cls),
+    `pasted cn() fragment includes real class "${cls}" (got [${fromPastedFragment.join(", ")}])`
+  );
+}
+for (const garbage of ["isActive", "?", ":"]) {
+  assert(
+    !fromPastedFragment.includes(garbage),
+    `pasted cn() fragment does not leak JS syntax "${garbage}" as a class (got [${fromPastedFragment.join(", ")}])`
+  );
+}
+
 
 // --- Test 8: Substring text search verification ---
 const srcText = `
@@ -320,5 +337,145 @@ const element = <div className={styles} />;
 const editsE = computeReplacements(srcReplaceE, ["bg-red-500"], ["bg-blue-500"]);
 const resultE = applyEdits(srcReplaceE, editsE);
 assert(resultE.includes('cn("p-4", "bg-blue-500")'), "replacing local variable class declarations works");
+
+// --- Test 13b: Replace preview (collectReplacements / applySelectedEdits) ---
+const { collectReplacements, applySelectedEdits, filterCandidateFiles } = require("../out/replacePreview");
+
+const srcPreviewA = `<div className="flex bg-red-500" />`;
+const srcPreviewB = `<span className="bg-red-500 p-2" />`;
+const previewSources = new Map([
+  ["/proj/PreviewA.tsx", srcPreviewA],
+  ["/proj/PreviewB.tsx", srcPreviewB],
+]);
+
+const occurrences = collectReplacements(previewSources, ["bg-red-500"], ["bg-blue-500"]);
+assert(occurrences.length === 2, `collectReplacements finds one occurrence per file (got ${occurrences.length})`);
+assert(
+  new Set(occurrences.map((o) => o.key)).size === occurrences.length,
+  "each occurrence gets a unique key"
+);
+const occA = occurrences.find((o) => o.file === "/proj/PreviewA.tsx");
+assert(occA && occA.before.includes("bg-red-500"), "occurrence 'before' shows the original text");
+assert(occA && occA.after.includes("bg-blue-500"), "occurrence 'after' shows the replacement text");
+assert(occA && occA.line === 0, `occurrence line is 0-based (got ${occA && occA.line})`);
+
+// Selecting one occurrence's key applies only that one.
+const onlyOccB = occurrences.find((o) => o.file === "/proj/PreviewB.tsx");
+const partialApply = applySelectedEdits(
+  previewSources,
+  ["bg-red-500"],
+  ["bg-blue-500"],
+  new Set([onlyOccB.key])
+);
+assert(partialApply.applied.length === 1, `only the selected occurrence is applied (got ${partialApply.applied.length})`);
+assert(partialApply.applied[0].file === "/proj/PreviewB.tsx", "the applied edit targets the selected file");
+assert(partialApply.skippedCount === 0, "nothing is reported skipped when the selected key still exists");
+
+// A key that no longer matches current source (file changed) is skipped, not applied stale.
+const changedSources = new Map([
+  ["/proj/PreviewA.tsx", `<div className="flex bg-green-500" />`], // no longer contains bg-red-500
+  ["/proj/PreviewB.tsx", srcPreviewB],
+]);
+const staleApply = applySelectedEdits(
+  changedSources,
+  ["bg-red-500"],
+  ["bg-blue-500"],
+  new Set(occurrences.map((o) => o.key)) // both original keys selected
+);
+assert(staleApply.applied.length === 1, `only the still-valid occurrence applies (got ${staleApply.applied.length})`);
+assert(staleApply.applied[0].file === "/proj/PreviewB.tsx", "the stale (changed) file's occurrence is not applied");
+assert(staleApply.skippedCount === 1, `the changed file's occurrence is reported skipped (got ${staleApply.skippedCount})`);
+
+// filterCandidateFiles: only files whose indexed classes include a target.
+const candidateIndex = new Map([
+  ["/proj/PreviewA.tsx", buildEntryFromSource(srcPreviewA, "/proj/PreviewA.tsx")],
+  ["/proj/PreviewB.tsx", buildEntryFromSource(srcPreviewB, "/proj/PreviewB.tsx")],
+]);
+const candidates = filterCandidateFiles(candidateIndex, ["bg-red-500"]);
+assert(candidates.length === 2, `both files are candidates for bg-red-500 (got ${candidates.length})`);
+const noCandidates = filterCandidateFiles(candidateIndex, ["nonexistent-class"]);
+assert(noCandidates.length === 0, "no candidates when the target class isn't indexed anywhere");
+
+// --- Test 14: Text term-coverage fallback (phrase not contiguous) ---
+const commentSrc = `
+function Widget() {
+  // TODO: fix the color later
+  return <div className="p-4 flex" />;
+}
+`;
+const commentEntry = buildEntryFromSource(commentSrc, "/proj/Widget14.tsx");
+
+// Not a contiguous substring (":" and "the" break it), but all terms co-occur on one line.
+const termResult = searchTextInFile("TODO fix color", commentEntry);
+assert(termResult !== null, "searchTextInFile matches via scattered term coverage");
+assert(termResult.matchType === "text", `term match is typed 'text' (got ${termResult && termResult.matchType})`);
+assert(termResult.textPhrase === false, "scattered-term match is not flagged as a phrase");
+assert(termResult.locations[0].line === 2, `term match locates the comment line (got ${termResult.locations[0].line})`);
+
+// A single-token contiguous match is still a phrase.
+const phraseResult = searchTextInFile("flex", commentEntry);
+assert(phraseResult !== null && phraseResult.textPhrase === true, "contiguous single-token match is a phrase");
+
+// --- Test 15: Adaptive ranking — prose query floats text matches above class matches ---
+const cardSrc = `<div className="block p-4" />`;
+const docSrc = `
+// sticky note reminder for the sidebar
+export const Doc = () => null;
+`;
+const adaptiveIndex = new Map([
+  ["/proj/Card15.tsx", buildEntryFromSource(cardSrc, "/proj/Card15.tsx")],
+  ["/proj/Doc15.tsx", buildEntryFromSource(docSrc, "/proj/Doc15.tsx")],
+]);
+
+// "block" is a real utility but "sticky"/"note" are prose, so this is a prose query.
+const proseRanked = rankFiles(["block", "sticky", "note"], adaptiveIndex, {
+  rawInput: "block sticky note",
+});
+assert(proseRanked.length === 2, `prose query returns both files (got ${proseRanked.length})`);
+assert(
+  proseRanked[0].file === "/proj/Doc15.tsx",
+  `comment/text match ranks first in a prose query (got ${proseRanked[0].file})`
+);
+assert(proseRanked[0].matchType === "text", `top prose result is a text match (got ${proseRanked[0].matchType})`);
+
+// A class-heavy query keeps the class match on top.
+const classRanked = rankFiles(["block", "p-4"], adaptiveIndex, { rawInput: "block p-4" });
+assert(
+  classRanked[0].file === "/proj/Card15.tsx",
+  `class-heavy query keeps the class match first (got ${classRanked[0].file})`
+);
+
+// --- Test 16: class-heavy queries suppress term-coverage noise ---
+// A file with zero class overlap but one query word as a property name should not surface here.
+const classFileSrc = `<div className="rounded-lg bg-red-500 flex" />`;
+const noiseFileSrc = `
+const decoration = {
+  border: "1px solid",
+  borderColor: "red",
+};
+`;
+const noiseIndex = new Map([
+  ["/proj/ClassFile16.tsx", buildEntryFromSource(classFileSrc, "/proj/ClassFile16.tsx")],
+  ["/proj/NoiseFile16.tsx", buildEntryFromSource(noiseFileSrc, "/proj/NoiseFile16.tsx")],
+]);
+
+// 2 of 3 tokens are real classes somewhere -> class-heavy.
+const noiseSuppressed = rankFiles(["border", "rounded-lg", "bg-red-500"], noiseIndex, {
+  rawInput: "border rounded-lg bg-red-500",
+});
+assert(noiseSuppressed.length === 1, `noise-only file is excluded for a class-heavy query (got ${noiseSuppressed.length})`);
+assert(
+  noiseSuppressed[0].file === "/proj/ClassFile16.tsx",
+  `only the real class match survives (got ${noiseSuppressed[0].file})`
+);
+
+// The same file still surfaces once the query is genuinely prose-shaped.
+const noiseSurfaced = rankFiles(["border", "config", "reminder"], noiseIndex, {
+  rawInput: "border config reminder",
+});
+assert(
+  noiseSurfaced.some((r) => r.file === "/proj/NoiseFile16.tsx"),
+  "the same file surfaces once the overall query is prose-shaped, not class-shaped"
+);
 
 console.log("\nDone.");

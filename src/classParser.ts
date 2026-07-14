@@ -28,6 +28,25 @@ export function tokenize(raw: string): string[] {
     .filter((token) => token.length > 0);
 }
 
+// A helper call (cn(...), clsx(...)) or a whitespace-bounded ?/:/&&  signals a pasted code
+// fragment rather than a plain class list. ":" alone isn't checked — Tailwind variants like
+// hover:bg-red-500 have no surrounding whitespace and would false-positive.
+const CODE_HELPER_CALL = /\b(?:cn|clsx|class[nN]ames|twMerge|cx)\s*\(/;
+const CODE_SYNTAX_TOKEN = /(?:^|\s)[?:](?:\s|$)|&&/;
+
+function looksLikeCodeFragment(raw: string): boolean {
+  return CODE_HELPER_CALL.test(raw) || CODE_SYNTAX_TOKEN.test(raw);
+}
+
+// Returns the joined contents of every quoted string, or null if there are none to extract.
+function extractQuotedSegments(raw: string): string | null {
+  const matches = [...raw.matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)];
+  if (matches.length === 0) {
+    return null;
+  }
+  return matches.map((m) => m[1] ?? m[2] ?? m[3] ?? "").join(" ");
+}
+
 export function extractClassesFromPaste(raw: string): string {
   const trimmed = raw.trim();
 
@@ -39,6 +58,15 @@ export function extractClassesFromPaste(raw: string): string {
   const templateMatch = trimmed.match(/\bclass(?:Name)?\s*=\s*\{\s*`([^`]*)`\s*\}/i);
   if (templateMatch) {
     return templateMatch[1];
+  }
+
+  // A pasted code fragment mixes class strings with JS syntax — extract only what's inside
+  // quotes so identifiers/operators never get treated as class names.
+  if (looksLikeCodeFragment(trimmed)) {
+    const quoted = extractQuotedSegments(trimmed);
+    if (quoted !== null) {
+      return quoted;
+    }
   }
 
   return trimmed;
@@ -98,10 +126,16 @@ export function isStyleInput(raw: string): boolean {
   if (/^style\s*=/i.test(trimmed)) {
     return true;
   }
+  // A bare CSS declaration list never contains JS/JSX syntax — quoted strings, ternaries,
+  // logical-and, braces/parens. A pasted class-list snippet (cn("a", cond ? "b" : "c")) often
+  // does, and also happens to contain a colon (from the ternary) and commas (from the args),
+  // which would otherwise satisfy the heuristic below and get misparsed as inline styles.
+  if (/["'`?(){}]|&&/.test(trimmed)) return false;
+
   const hasColon = trimmed.includes(":");
   if (!hasColon) return false;
   if (trimmed.includes(";") || trimmed.includes(",")) return true;
-  
+
   const key = trimmed.split(":")[0].trim();
   return /^(width|height|min-width|min-height|max-width|max-height|font-size|font-weight|padding|margin|color|background|display|flex|position|top|bottom|left|right|border|opacity|z-index|line-height|text-align|align-items|justify-content)/i.test(key);
 }

@@ -17,22 +17,14 @@ function getOrLoadSource(entry: FileIndexEntry): string {
   }
 }
 
-// Split a source line into class-name-like tokens. The delimiters are the characters that
-// can't appear inside a class token (whitespace, quotes, the braces/parens/angle brackets
-// JSX uses, commas, etc.). Variant colons, arbitrary-value brackets, "!" important flags and
-// "/" opacity stay intact, so tokens like hover:bg-red-500, w-[30px], !mt-4 and border-white/50
-// compare cleanly against the query. Non-class identifiers (className, div, const) are harmless
-// since we only ever intersect against the known query set.
+// Splits on delimiters that can't appear inside a class token, so variant colons, arbitrary
+// brackets, "!" and "/" stay intact (hover:bg-red-500, w-[30px], !mt-4, border-white/50).
 function classTokensOnLine(line: string): Set<string> {
   return new Set(line.split(/[\s"'`{}()<>=,;]+/).filter(Boolean));
 }
 
-// Recompute a result's displayed locations by scanning the real source, counting how many
-// query classes actually co-occur on each line, and keeping only the lines tied at the true
-// maximum. The class-based index caps locations at 8 per class (see indexer), so a deep line
-// holding the full combo can be undercounted and lose to shallower lines that share only a few
-// common classes. Reading the source here — done only for the handful of displayed results —
-// gives an accurate count and drops those "technically matched, practically irrelevant" lines.
+// Recomputes accurate per-line match counts from the real source — the class index caps
+// locations per class, so a line with the full combo can otherwise be undercounted.
 function refineLocations(
   result: SearchResult,
   inputClasses: string[],
@@ -108,51 +100,140 @@ function refineLocations(
   result.maxLineMatches = best;
 }
 
+// Splits a query into lower-cased terms, keeping class-like tokens (w-[10px], hover:bg-red-500)
+// whole and trimming prose punctuation ("TODO:" -> "todo").
+function queryTerms(query: string): string[] {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const raw of query.toLowerCase().split(/[\s,;]+/)) {
+    const term = raw.replace(/^[.,;:!?"'`]+/, "").replace(/[.,;:!?"'`]+$/, "");
+    if (term.length >= 2 && !seen.has(term)) {
+      seen.add(term);
+      terms.push(term);
+    }
+  }
+  return terms;
+}
+
+// Searches all raw source text (comments, JSX text, prop names, strings), not just class names.
+// A full contiguous phrase match is the strongest signal; failing that, terms co-occurring on
+// a line are ranked by coverage.
 export function searchTextInFile(
   query: string,
-  entry: FileIndexEntry
+  entry: FileIndexEntry,
+  options: { allowTermFallback?: boolean } = {}
 ): SearchResult | null {
   const source = getOrLoadSource(entry);
   if (!source) {
     return null;
   }
 
-  const queryLower = query.toLowerCase();
-  const sourceLower = source.toLowerCase();
-
-  const locations: any[] = [];
   const lines = source.split(/\r?\n/);
+  const queryLower = query.trim().toLowerCase();
 
-  for (let i = 0; i < lines.length; i++) {
-    const lineText = lines[i];
-    const lineLower = lineText.toLowerCase();
-    let index = lineLower.indexOf(queryLower);
-
-    while (index !== -1) {
-      locations.push({
+  // 1. Phrase match — the query as one contiguous substring.
+  if (queryLower.length >= 2) {
+    const phraseLocs: ClassLocation[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const lineText = lines[i];
+      const lineLower = lineText.toLowerCase();
+      let index = lineLower.indexOf(queryLower);
+      while (index !== -1) {
+        phraseLocs.push({
+          file: entry.file,
+          line: i,
+          column: index,
+          context: lineText.trim().slice(0, 140),
+        });
+        index = lineLower.indexOf(queryLower, index + 1);
+      }
+    }
+    if (phraseLocs.length > 0) {
+      return {
         file: entry.file,
-        line: i,
-        column: index,
-        context: lineText.trim().slice(0, 140),
-      });
-      index = lineLower.indexOf(queryLower, index + 1);
+        matchedCount: phraseLocs.length,
+        totalInputCount: 1,
+        score: 1.0,
+        matchedClasses: [query],
+        unmatchedClasses: [],
+        nearMatches: [],
+        locations: phraseLocs.slice(0, MAX_LOCATIONS_PER_RESULT),
+        maxLineMatches: phraseLocs.length,
+        matchType: "text",
+        textScore: 1.0,
+        textPhrase: true,
+      };
     }
   }
 
-  if (locations.length === 0) {
+  // 2. Term-coverage fallback. Only worth it for prose queries — for a class-list query,
+  // "some of these words appear somewhere" is coincidence, not signal.
+  if (options.allowTermFallback === false) {
     return null;
   }
 
+  const terms = queryTerms(query);
+  if (terms.length === 0) {
+    return null;
+  }
+
+  let bestTermCount = 0;
+  const perLine: { line: number; count: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const lineLower = lines[i].toLowerCase();
+    let count = 0;
+    for (const term of terms) {
+      if (lineLower.includes(term)) {
+        count++;
+      }
+    }
+    if (count > 0) {
+      perLine.push({ line: i, count });
+      if (count > bestTermCount) {
+        bestTermCount = count;
+      }
+    }
+  }
+
+  if (bestTermCount === 0) {
+    return null;
+  }
+
+  const locations = perLine
+    .filter((p) => p.count === bestTermCount)
+    .slice(0, MAX_LOCATIONS_PER_RESULT)
+    .map((p) => {
+      const lineText = lines[p.line];
+      const lineLower = lineText.toLowerCase();
+      let column = 0;
+      for (const term of terms) {
+        const idx = lineLower.indexOf(term);
+        if (idx !== -1 && (column === 0 || idx < column)) {
+          column = idx;
+        }
+      }
+      return {
+        file: entry.file,
+        line: p.line,
+        column,
+        context: lineText.trim().slice(0, 140),
+      };
+    });
+
+  const coverage = bestTermCount / terms.length;
   return {
     file: entry.file,
-    matchedCount: locations.length,
-    totalInputCount: 1,
-    score: 1.0,
+    matchedCount: bestTermCount,
+    totalInputCount: terms.length,
+    score: coverage,
     matchedClasses: [query],
     unmatchedClasses: [],
     nearMatches: [],
-    locations: locations.slice(0, MAX_LOCATIONS_PER_RESULT),
-    maxLineMatches: locations.length,
+    locations,
+    maxLineMatches: bestTermCount,
+    matchType: "text",
+    textScore: coverage,
+    textPhrase: false,
   };
 }
 
@@ -238,7 +319,24 @@ export function scoreFile(
     nearMatches,
     locations,
     maxLineMatches,
+    matchType: "class",
   };
+}
+
+// Share of query tokens that must be real classes before class matches lead the ranking.
+const CLASS_QUERY_THRESHOLD = 0.6;
+// Text-only hits reserved a slot so a class-heavy result list can't truncate them entirely.
+const RESERVED_TEXT_SLOTS = 3;
+
+function classComparator(a: SearchResult, b: SearchResult): number {
+  if (b.maxLineMatches !== a.maxLineMatches) return b.maxLineMatches - a.maxLineMatches;
+  if (b.score !== a.score) return b.score - a.score;
+  if (b.matchedCount !== a.matchedCount) return b.matchedCount - a.matchedCount;
+  return a.file.localeCompare(b.file);
+}
+
+function hasTextSignal(r: SearchResult): boolean {
+  return r.matchType === "text" || r.matchType === "both";
 }
 
 export function rankFiles(
@@ -249,57 +347,119 @@ export function rankFiles(
   const minScore = options.minScore ?? 0;
   const resultsMap = new Map<string, SearchResult>();
 
-  // 1. Class-based lookup
+  // 1. Class-based lookup, tracking which query tokens matched a real class anywhere.
+  const matchedTokens = new Set<string>();
   for (const entry of index.values()) {
     const result = scoreFile(inputClasses, entry);
-    if (result && result.score >= minScore) {
-      resultsMap.set(entry.file, result);
+    if (result) {
+      for (const cls of result.matchedClasses) matchedTokens.add(cls);
+      for (const nm of result.nearMatches) matchedTokens.add(nm.input);
+      if (result.score >= minScore) {
+        resultsMap.set(entry.file, result);
+      }
     }
   }
 
-  // 2. Substring text search fallback/boost
+  const classRate = inputClasses.length > 0 ? matchedTokens.size / inputClasses.length : 0;
+  const proseQuery = classRate < CLASS_QUERY_THRESHOLD;
+
+  // 2. Text search — always run when there's a usable raw query, across all source text.
   const rawInput = options.rawInput?.trim();
   if (rawInput && rawInput.length >= 2) {
     for (const entry of index.values()) {
-      const textResult = searchTextInFile(rawInput, entry);
-      if (textResult) {
-        const existing = resultsMap.get(entry.file);
-        if (existing) {
-          // The raw text match found the literal, full multi-class string, so it's the
-          // strongest possible signal — put those locations first, ahead of individual
-          // per-class hits, instead of only appending them when their line is missing.
-          const mergedLocations = [...textResult.locations];
-          for (const loc of existing.locations) {
-            if (!mergedLocations.some((l) => l.line === loc.line)) {
-              mergedLocations.push(loc);
-            }
+      const textResult = searchTextInFile(rawInput, entry, { allowTermFallback: proseQuery });
+      if (!textResult) continue;
+
+      const existing = resultsMap.get(entry.file);
+      if (existing) {
+        // Both signals matched — text-hit lines first, the literal query is the stronger locator.
+        const mergedLocations = [...textResult.locations];
+        for (const loc of existing.locations) {
+          if (!mergedLocations.some((l) => l.line === loc.line)) {
+            mergedLocations.push(loc);
           }
-          existing.locations = mergedLocations.slice(0, MAX_LOCATIONS_PER_RESULT);
+        }
+        existing.locations = mergedLocations.slice(0, MAX_LOCATIONS_PER_RESULT);
+        existing.matchType = "both";
+        existing.textScore = textResult.textScore;
+        existing.textPhrase = textResult.textPhrase;
+        // Only a full-phrase hit is strong enough to force a perfect score; a scattered-term
+        // hit shouldn't inflate a partial class match.
+        if (textResult.textPhrase) {
           existing.score = 1.0;
           existing.maxLineMatches = Math.max(existing.maxLineMatches, textResult.matchedCount);
-        } else {
-          resultsMap.set(entry.file, textResult);
         }
+      } else {
+        resultsMap.set(entry.file, textResult);
       }
     }
   }
 
   const results = Array.from(resultsMap.values());
 
+  // 3. Adaptive ranking: prose queries rank text first, class queries rank class first.
   results.sort((a, b) => {
-    if (b.maxLineMatches !== a.maxLineMatches) return b.maxLineMatches - a.maxLineMatches;
-    if (b.score !== a.score) return b.score - a.score;
-    if (b.matchedCount !== a.matchedCount) return b.matchedCount - a.matchedCount;
-    return a.file.localeCompare(b.file);
+    if (proseQuery) {
+      const at = hasTextSignal(a) ? 0 : 1;
+      const bt = hasTextSignal(b) ? 0 : 1;
+      if (at !== bt) return at - bt;
+      if (at === 0) {
+        const ax = a.textScore ?? 0;
+        const bx = b.textScore ?? 0;
+        if (bx !== ax) return bx - ax;
+        return classComparator(a, b);
+      }
+      return classComparator(a, b);
+    }
+    // Class query: class + both lead, text-only trails.
+    const at = a.matchType === "text" ? 1 : 0;
+    const bt = b.matchType === "text" ? 1 : 0;
+    if (at !== bt) return at - bt;
+    if (at === 1) {
+      const ax = a.textScore ?? 0;
+      const bx = b.textScore ?? 0;
+      if (bx !== ax) return bx - ax;
+      return a.file.localeCompare(b.file);
+    }
+    return classComparator(a, b);
   });
 
-  const sliced = options.maxResults ? results.slice(0, options.maxResults) : results;
+  const sliced = applyLimit(results, options.maxResults, proseQuery);
 
-  // Re-derive displayed locations from the real source, but only for the results we return —
-  // this is where the accurate per-line counts matter and the source-read cost is bounded.
+  // Refine locations for the returned results only. Text-only results already have accurate
+  // locations from searchTextInFile — refining against non-class query tokens would distort them.
   for (const result of sliced) {
+    if (result.matchType === "text") continue;
     refineLocations(result, inputClasses, index.get(result.file));
   }
 
   return sliced;
+}
+
+// Slices to maxResults, reserving a few text-only hits so they aren't truncated off the bottom.
+function applyLimit(
+  results: SearchResult[],
+  maxResults: number | undefined,
+  proseQuery: boolean
+): SearchResult[] {
+  if (!maxResults || results.length <= maxResults) {
+    return results;
+  }
+  const head = results.slice(0, maxResults);
+  if (proseQuery) {
+    return head; // prose mode already ranks text first — nothing to rescue
+  }
+  const textInHead = head.filter((r) => r.matchType === "text").length;
+  const need = RESERVED_TEXT_SLOTS - textInHead;
+  if (need <= 0) {
+    return head;
+  }
+  const reserved = results
+    .slice(maxResults)
+    .filter((r) => r.matchType === "text")
+    .slice(0, need);
+  if (reserved.length === 0) {
+    return head;
+  }
+  return [...head.slice(0, maxResults - reserved.length), ...reserved];
 }

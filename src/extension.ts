@@ -156,11 +156,10 @@ async function runSearchCommand(): Promise<void> {
 
   const isStyle = isStyleInput(raw);
   const inputClasses = isStyle ? parsePastedStyleList(raw) : parsePastedClassList(raw);
-  if (inputClasses.length === 0) {
+  // A plain-text query with no class tokens is still valid — text search handles it below.
+  if (isStyle && inputClasses.length === 0) {
     vscode.window.showWarningMessage(
-      isStyle
-        ? "Smart Class Search: no style properties were found in that input."
-        : "Smart Class Search: no class names were found in that input."
+      "Smart Class Search: no style properties were found in that input."
     );
     return;
   }
@@ -169,7 +168,11 @@ async function runSearchCommand(): Promise<void> {
   const minScore = cfg.get<number>("minScore", 0.15);
   const maxResults = cfg.get<number>("maxResults", 25);
 
-  const results = rankFiles(inputClasses, indexer.getIndex(), { minScore, maxResults });
+  const results = rankFiles(inputClasses, indexer.getIndex(), {
+    minScore,
+    maxResults,
+    rawInput: isStyle ? undefined : raw,
+  });
   await showResultsQuickPick(results);
 }
 
