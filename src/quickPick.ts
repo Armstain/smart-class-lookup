@@ -46,10 +46,16 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
     ? path.relative(workspaceRoot, result.file)
     : result.file;
 
+  const isTextOnly = result.matchType === "text";
+
   const matchedPreview = result.matchedClasses.slice(0, 8).join(" ");
   const overflow = result.matchedClasses.length > 8 ? " …" : "";
 
-  const detailParts = [`${relativePath}  —  ${matchedPreview}${overflow}`];
+  const detailParts = [
+    isTextOnly
+      ? `${relativePath}  —  text match`
+      : `${relativePath}  —  ${matchedPreview}${overflow}`,
+  ];
   if (result.nearMatches.length > 0) {
     const nearPreview = result.nearMatches
       .slice(0, 4)
@@ -70,12 +76,18 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
     return true;
   });
 
+  const description = isTextOnly
+    ? "$(search) text match"
+    : `${formatPercent(result.score)} match  (${result.matchedCount}/${result.totalInputCount})${
+        result.matchType === "both" ? "  $(search) +text" : ""
+      }`;
+
   const fileItem: FileItem = {
     itemType: "file",
     result,
     locationIndex: 0,
     label: `$(file-code) ${path.basename(result.file)}`,
-    description: `${formatPercent(result.score)} match  (${result.matchedCount}/${result.totalInputCount})`,
+    description,
     detail: detailParts.join("   |   "),
     buttons: [COPY_PATH_BUTTON, COPY_CLASSES_BUTTON],
   };
