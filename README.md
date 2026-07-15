@@ -108,6 +108,30 @@ Run **"Smart Class Search: Find Duplicate Components"** from the Command
 Palette any time to look for elements in different files that render with an
 identical set of classes.
 
+### Always-On Adaptive Text Search
+
+Search now automatically runs class matching alongside a full source-text search (comments, JSX text, property names, strings) by default. The ranking engine intelligently adapts based on the query:
+- **Prose-shaped queries** (e.g. comment searches, raw labels, or general text) float literal text matches to the top.
+- **Class-heavy queries** (e.g. Tailwind lists) keep class matches on top and gate out incidental word coincidences (like a class named `border` matching a CSS property name `border:` in a style object) to keep results noise-free.
+- **Syntactic Cleaning**: Pasting a raw code fragment (such as `cn()` or `clsx()` calls, ternaries) into the search box parses actual class strings cleanly without leaking bare JavaScript syntax (identifiers, operators like `?`, `:`, `&&`) as class names.
+
+### Class Replacement (Interactive Preview & Selective Apply)
+
+You can replace classes across your workspace using either the sidebar or the Command Palette:
+
+#### Via the Sidebar (Recommended):
+1. Click the **"Replace"** toggle button under the main search input to open the replacement fields.
+2. Enter the class(es) to find in the first input, and the replacement class(es) in the second input (leave empty to delete). Click **"Replace"** to generate a preview.
+3. The sidebar switches to a **Replace Preview** pane, displaying all matching occurrences grouped by file.
+4. Each occurrence shows its line number and a side-by-side diff (`before → after`).
+5. Use the checkboxes to select or deselect specific occurrences or entire files.
+6. Click **"Apply (N)"** to perform the replacements. The extension re-derives edits from the current file source at the exact moment of application; if a file has changed since the preview was generated, those occurrences are safely skipped to avoid source corruption.
+
+#### Via the Command Palette:
+1. `Cmd/Ctrl+Shift+P` → **"Smart Class Search: Replace Class..."**.
+2. Enter the class(es) to find and the replacement class(es) when prompted.
+3. Confirm the workspace edits via a warning dialog indicating the number of affected files and occurrences.
+
 ## Smart paste detection
 
 Both the sidebar and the Command Palette accept any of the following - no
@@ -164,22 +188,6 @@ can force a full rebuild with **"Smart Class Search: Rebuild Index"**.
 | `smartClassLookup.enablePreview`         | `true`                                                    | Live preview of the file when navigating results (Quick Pick & Sidebar) |
 | `smartClassLookup.duplicateMinClasses`   | `3`                                                       | Minimum shared classes for "Find Duplicate Components" to report a group |
 
-## Project layout
-
-```
-src/
-  extension.ts       activation, command registration, status bar, clipboard pre-fill
-  astExtractor.ts    Babel AST walk: finds class strings + their locations, resolves local variables
-  classParser.ts     tokenizes/dedupes the pasted string; strips HTML/JSX wrappers; arbitrary-value helpers
-  indexer.ts         builds + incrementally maintains the workspace index; persists cache
-  matcher.ts         order-independent similarity scoring & ranking, with near-match credit
-  duplicates.ts      finds elements with identical class sets across different files
-  quickPick.ts       results UI: live preview, multi-location items, copy actions, jump-to-file
-  sidebarProvider.ts persistent sidebar search webview
-test/
-  smoke.js           functional tests for the extractor, parser, matcher, and duplicate finder (no vscode dep)
-```
-
 ## Developing
 
 ```bash
@@ -192,29 +200,3 @@ To try it in VS Code: open this folder, press `F5` to launch an Extension
 Development Host with the extension loaded, open any React/Next.js project
 in that window, and run **"Smart Class Search"** from the Command
 Palette.
-
-## Possible next steps
-
-- Support `.vue`, `.svelte`, and `.html` files via a regex-based fallback
-  extractor for `class="..."` attributes.
-- Resolve variables imported from another file, not just declared in the
-  same file.
-
-## What's new
-
-- **Local variable resolution** — `const styles = cn("p-4", "flex"); <div className={styles}>`
-  is now followed back to its declaration, so classes computed once and reused
-  via a variable are indexed correctly (works for both `className={x}` and
-  `style={x}`, one file, any number of hops).
-- **Near-match scoring for arbitrary values** — pasting `w-[124px]` now
-  partially matches a file that has `w-[120px]` (same utility, different
-  bracketed value) instead of scoring it as a total miss. Near matches are
-  shown separately from exact matches and missing classes in both the Quick
-  Pick and the sidebar.
-- **"Find Duplicate Components" command** — scans the index for elements in
-  different files that share the exact same set of classes, so you can spot
-  copy-pasted markup that's a candidate for extraction into a shared
-  component.
-- **Copy actions** — copy a result's file path or its matched class list
-  straight from the Quick Pick (hover a result for the button icons) or the
-  sidebar (the ⧉ icon next to each result).
