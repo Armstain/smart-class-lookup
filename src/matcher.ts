@@ -158,7 +158,7 @@ export function searchTextInFile(
         unmatchedClasses: [],
         nearMatches: [],
         locations: phraseLocs.slice(0, MAX_LOCATIONS_PER_RESULT),
-        maxLineMatches: phraseLocs.length,
+        maxLineMatches: 1,
         matchType: "text",
         textScore: 1.0,
         textPhrase: true,
@@ -329,8 +329,8 @@ const CLASS_QUERY_THRESHOLD = 0.6;
 const RESERVED_TEXT_SLOTS = 3;
 
 function classComparator(a: SearchResult, b: SearchResult): number {
-  if (b.maxLineMatches !== a.maxLineMatches) return b.maxLineMatches - a.maxLineMatches;
   if (b.score !== a.score) return b.score - a.score;
+  if (b.maxLineMatches !== a.maxLineMatches) return b.maxLineMatches - a.maxLineMatches;
   if (b.matchedCount !== a.matchedCount) return b.matchedCount - a.matchedCount;
   return a.file.localeCompare(b.file);
 }
@@ -355,6 +355,7 @@ export function rankFiles(
       for (const cls of result.matchedClasses) matchedTokens.add(cls);
       for (const nm of result.nearMatches) matchedTokens.add(nm.input);
       if (result.score >= minScore) {
+        refineLocations(result, inputClasses, entry);
         resultsMap.set(entry.file, result);
       }
     }
@@ -387,7 +388,7 @@ export function rankFiles(
         // hit shouldn't inflate a partial class match.
         if (textResult.textPhrase) {
           existing.score = 1.0;
-          existing.maxLineMatches = Math.max(existing.maxLineMatches, textResult.matchedCount);
+          existing.maxLineMatches = Math.max(existing.maxLineMatches, inputClasses.length || 1);
         }
       } else {
         resultsMap.set(entry.file, textResult);
@@ -424,16 +425,7 @@ export function rankFiles(
     return classComparator(a, b);
   });
 
-  const sliced = applyLimit(results, options.maxResults, proseQuery);
-
-  // Refine locations for the returned results only. Text-only results already have accurate
-  // locations from searchTextInFile — refining against non-class query tokens would distort them.
-  for (const result of sliced) {
-    if (result.matchType === "text") continue;
-    refineLocations(result, inputClasses, index.get(result.file));
-  }
-
-  return sliced;
+  return applyLimit(results, options.maxResults, proseQuery);
 }
 
 // Slices to maxResults, reserving a few text-only hits so they aren't truncated off the bottom.

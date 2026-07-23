@@ -478,4 +478,23 @@ assert(
   "the same file surfaces once the overall query is prose-shaped, not class-shaped"
 );
 
+// --- Test 17: Ranking order — 100% match score MUST rank above partial matches (e.g. 71%) ---
+const fullMatchSrc = `<div className="flex flex-wrap items-center gap-[7px] px-3 pb-2 pt-1" />`;
+const partialMatchSrc = `
+<>
+  <div className="flex flex-wrap items-center px-3 pb-2" />
+  <div className="flex flex-wrap items-center px-3 pb-2" />
+  <div className="flex flex-wrap items-center px-3 pb-2" />
+</>
+`;
+const rankingTestIndex = new Map([
+  ["/proj/PartialMatch.tsx", buildEntryFromSource(partialMatchSrc, "/proj/PartialMatch.tsx")],
+  ["/proj/FullMatch.tsx", buildEntryFromSource(fullMatchSrc, "/proj/FullMatch.tsx")],
+]);
+const query17 = parsePastedClassList("flex flex-wrap items-center gap-[7px] px-3 pb-2 pt-1");
+const ranked17 = rankFiles(query17, rankingTestIndex, { rawInput: "flex flex-wrap items-center gap-[7px] px-3 pb-2 pt-1" });
+assert(ranked17[0].file === "/proj/FullMatch.tsx", `100% match file ranks FIRST (got ${ranked17[0].file})`);
+assert(ranked17[0].score === 1.0, `top result has score 1.0 (got ${ranked17[0].score})`);
+assert(ranked17[1].file === "/proj/PartialMatch.tsx", `partial match file ranks SECOND (got ${ranked17[1].file})`);
+
 console.log("\nDone.");
