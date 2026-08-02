@@ -520,6 +520,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       white-space: nowrap;
     }
 
+    .match-highlight {
+      background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+      border-radius: 2px;
+    }
+
     .matched-list {
       display: flex;
       flex-wrap: wrap;
@@ -919,6 +924,81 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     });
 
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // Splits a prose query into lower-cased terms, trimming leading/trailing punctuation.
+    // Mirrors matcher.ts's queryTerms() closely enough for display purposes.
+    function splitQueryTerms(query) {
+      const parts = query.trim().toLowerCase().split(/[\\s,;]+/);
+      const seen = {};
+      const terms = [];
+      parts.forEach((part) => {
+        const cleaned = part.replace(/^[^a-z0-9]+/i, '').replace(/[^a-z0-9]+$/i, '');
+        if (cleaned.length >= 2 && !seen[cleaned]) {
+          seen[cleaned] = true;
+          terms.push(cleaned);
+        }
+      });
+      return terms;
+    }
+
+    // Finds all case-insensitive occurrences of each term in text, then merges overlaps.
+    function findMatchRanges(text, terms) {
+      const lowerText = text.toLowerCase();
+      const ranges = [];
+      terms.forEach((term) => {
+        if (!term) return;
+        let from = 0;
+        let idx = lowerText.indexOf(term, from);
+        while (idx !== -1) {
+          ranges.push([idx, idx + term.length]);
+          from = idx + term.length;
+          idx = lowerText.indexOf(term, from);
+        }
+      });
+      ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+      const merged = [];
+      ranges.forEach((range) => {
+        const last = merged[merged.length - 1];
+        if (last && range[0] <= last[1]) {
+          last[1] = Math.max(last[1], range[1]);
+        } else {
+          merged.push(range);
+        }
+      });
+      return merged;
+    }
+
+    // Highlights the query (or, failing a phrase match, its individual terms) inside a
+    // snippet, mirroring the phrase-first / term-fallback order matcher.ts uses for text search.
+    function highlightMatches(text, query) {
+      const trimmedQuery = query.trim();
+      if (!trimmedQuery) return escapeHtml(text);
+
+      let terms = [trimmedQuery.toLowerCase()];
+      if (text.toLowerCase().indexOf(terms[0]) === -1) {
+        terms = splitQueryTerms(query);
+      }
+      if (terms.length === 0) return escapeHtml(text);
+
+      const ranges = findMatchRanges(text, terms);
+      if (ranges.length === 0) return escapeHtml(text);
+
+      let html = '';
+      let cursor = 0;
+      ranges.forEach((range) => {
+        html += escapeHtml(text.slice(cursor, range[0]));
+        html += '<span class="match-highlight">' + escapeHtml(text.slice(range[0], range[1])) + '</span>';
+        cursor = range[1];
+      });
+      html += escapeHtml(text.slice(cursor));
+      return html;
+    }
+
     function renderResults(results) {
       resultsContainer.innerHTML = '';
       if (results.length === 0) {
@@ -1046,7 +1126,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }
         });
 
-        if (res.locations && res.locations.length > 1) {
+        const isTextMatch = res.matchType === 'text' || res.matchType === 'both';
+
+        if (res.locations && res.locations.length > 0) {
           const locsList = document.createElement('div');
           locsList.className = 'locations-list';
 
@@ -1057,7 +1139,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             return true;
           });
 
-          if (dedupedLocations.length > 1) {
+          if (dedupedLocations.length > 0) {
             dedupedLocations.forEach((loc) => {
               const idx = res.locations.indexOf(loc);
               const locItem = document.createElement('div');
@@ -1069,7 +1151,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
               const snippet = document.createElement('span');
               snippet.className = 'location-snippet';
-              snippet.textContent = loc.context.trim();
+              if (isTextMatch) {
+                snippet.innerHTML = highlightMatches(loc.context.trim(), searchInput.value);
+              } else {
+                snippet.textContent = loc.context.trim();
+              }
 
               locItem.appendChild(lineNum);
               locItem.appendChild(snippet);

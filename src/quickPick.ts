@@ -202,7 +202,7 @@ export async function openAndHighlight(
 ): Promise<vscode.TextEditor> {
   const uri = vscode.Uri.file(result.file);
   const document = await vscode.workspace.openTextDocument(uri);
-  const editor = await vscode.window.showTextDocument(document, { preview });
+  const editor = await vscode.window.showTextDocument(document, { preview, preserveFocus: preview });
 
   const targetLoc = result.locations[locationIndex] ?? result.locations[0];
   if (!targetLoc) return editor;

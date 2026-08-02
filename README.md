@@ -8,6 +8,14 @@ when your codebase spreads those classes across `cn()`, `clsx()`,
 A plain text/regex search for the DevTools string will never find any of
 these. Smart Class Search will.
 
+## What's New in v0.3.2
+
+- **Instant Cold Startup**: Optimized workspace indexing with non-blocking event-loop yields for 0ms sidebar startup.
+- **Smart Code & Identifier Search**: Text search now matches camelCase, snake_case, and kebab-case identifiers (`signIn`, `sign_in`, `sign-in`).
+- **Precise Stop-Word Filtering**: Word-boundary checks prevent short terms (`in`, `on`, `at`) from matching inside unrelated words like `insured`.
+- **Sidebar Line Snippets**: Location line snippets with highlighted matches display under every result in the sidebar tree.
+- **Smooth Editor Live Preview**: Instant live editor preview when hovering or navigating results without losing focus.
+
 ## Examples
 
 **`cn()` with conditionals**

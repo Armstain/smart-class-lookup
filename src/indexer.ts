@@ -1,6 +1,6 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import { extractClassesFromSource } from "./astExtractor";
+import { canPossiblyContainClasses, extractClassesFromSource } from "./astExtractor";
 import { buildArbitraryIndex } from "./classParser";
 import type { ClassLocation, FileIndexEntry } from "./types";
 
@@ -34,6 +34,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
   private building: Promise<void> | undefined;
   public fileCount = 0;
   public lastBuildMs = 0;
+  private fastSkipCount = 0;
   private configWatcherRegistered = false;
 
   constructor(
@@ -63,6 +64,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
 
   private async doBuildFullIndex(): Promise<void> {
     const start = Date.now();
+    this.fastSkipCount = 0;
     const { include, exclude } = this.getConfig();
 
     const cache = this.context.workspaceState.get<IndexCache>(CACHE_KEY);
@@ -131,7 +133,8 @@ export class WorkspaceIndexer implements vscode.Disposable {
     this.fileCount = this.index.size;
     this.lastBuildMs = Date.now() - start;
     this.output.appendLine(
-      `[index] built index for ${this.fileCount} files with classes in ${this.lastBuildMs}ms`
+      `[index] built index for ${this.fileCount} files with classes in ${this.lastBuildMs}ms` +
+        (this.fastSkipCount > 0 ? ` (skipped parsing ${this.fastSkipCount} files with no possible classes)` : "")
     );
 
     if (changed) {
@@ -178,6 +181,13 @@ export class WorkspaceIndexer implements vscode.Disposable {
 
     const source = Buffer.from(bytes).toString("utf8");
     const filePath = uri.fsPath;
+
+    if (!canPossiblyContainClasses(source)) {
+      this.fastSkipCount++;
+      this.removeFile(filePath);
+      return;
+    }
+
     const { classes, parseError } = extractClassesFromSource(source, filePath);
 
     if (parseError) {

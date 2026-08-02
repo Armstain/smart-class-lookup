@@ -33,6 +33,21 @@ const BABEL_PLUGINS: import("@babel/parser").ParserPlugin[] = [
   "nullishCoalescingOperator",
 ];
 
+// Cheap textual pre-check so callers can skip the full Babel parse for files that could
+// not possibly yield a class: extractClassesFromSource only ever emits from a `className`/
+// `style` JSX attribute, a call to one of CLASS_HELPER_NAMES, or *any* array literal (`[`)
+// in the file. Deliberately conservative — a false "maybe" just costs an unneeded parse;
+// a false "never" would silently drop real classes, which must never happen.
+export function canPossiblyContainClasses(source: string): boolean {
+  if (source.includes("className") || source.includes("style") || source.includes("[")) {
+    return true;
+  }
+  for (const name of CLASS_HELPER_NAMES) {
+    if (source.includes(name)) return true;
+  }
+  return false;
+}
+
 export function extractClassesFromSource(
   source: string,
   filePath: string

@@ -129,25 +129,45 @@ export function searchTextInFile(
   }
 
   const lines = source.split(/\r?\n/);
-  const queryLower = query.trim().toLowerCase();
+  const rawQuery = query.trim();
+  const queryLower = rawQuery.toLowerCase();
 
-  // 1. Phrase match — the query as one contiguous substring.
+  // Generate phrase variants for identifier search (e.g. "Sign in" -> ["sign in", "signin", "sign_in", "sign-in"])
+  const phraseVariants: string[] = [queryLower];
+  const queryWords = queryLower.split(/[\s_-]+/).filter(Boolean);
+  if (queryWords.length > 1) {
+    phraseVariants.push(queryWords.join(""));
+    phraseVariants.push(queryWords.join("_"));
+    phraseVariants.push(queryWords.join("-"));
+  }
+
+  // 1. Phrase match — exact substring or identifier variant match.
   if (queryLower.length >= 2) {
     const phraseLocs: ClassLocation[] = [];
+    const seenLineCol = new Set<string>();
+
     for (let i = 0; i < lines.length; i++) {
       const lineText = lines[i];
       const lineLower = lineText.toLowerCase();
-      let index = lineLower.indexOf(queryLower);
-      while (index !== -1) {
-        phraseLocs.push({
-          file: entry.file,
-          line: i,
-          column: index,
-          context: lineText.trim().slice(0, 140),
-        });
-        index = lineLower.indexOf(queryLower, index + 1);
+
+      for (const variant of phraseVariants) {
+        let index = lineLower.indexOf(variant);
+        while (index !== -1) {
+          const key = `${i}:${index}`;
+          if (!seenLineCol.has(key)) {
+            seenLineCol.add(key);
+            phraseLocs.push({
+              file: entry.file,
+              line: i,
+              column: index,
+              context: lineText.trim().slice(0, 140),
+            });
+          }
+          index = lineLower.indexOf(variant, index + 1);
+        }
       }
     }
+
     if (phraseLocs.length > 0) {
       return {
         file: entry.file,
@@ -166,8 +186,7 @@ export function searchTextInFile(
     }
   }
 
-  // 2. Term-coverage fallback. Only worth it for prose queries — for a class-list query,
-  // "some of these words appear somewhere" is coincidence, not signal.
+  // 2. Term-coverage fallback with word-boundary checking for short stop-words.
   if (options.allowTermFallback === false) {
     return null;
   }
@@ -177,17 +196,27 @@ export function searchTextInFile(
     return null;
   }
 
+  const STOP_WORDS = new Set(["in", "on", "at", "is", "it", "to", "of", "for", "or", "an", "by", "a", "the", "and", "with"]);
+  const significantTerms = terms.filter((t) => !STOP_WORDS.has(t));
+  const minRequiredTerms = significantTerms.length > 0 ? significantTerms.length : terms.length;
+
   let bestTermCount = 0;
   const perLine: { line: number; count: number }[] = [];
   for (let i = 0; i < lines.length; i++) {
     const lineLower = lines[i].toLowerCase();
     let count = 0;
     for (const term of terms) {
-      if (lineLower.includes(term)) {
+      const isStop = STOP_WORDS.has(term);
+      const isMatch = isStop
+        ? new RegExp(`\\b${term}\\b`, "i").test(lineLower)
+        : lineLower.includes(term);
+
+      if (isMatch) {
         count++;
       }
     }
-    if (count > 0) {
+
+    if (count >= minRequiredTerms) {
       perLine.push({ line: i, count });
       if (count > bestTermCount) {
         bestTermCount = count;
@@ -195,7 +224,7 @@ export function searchTextInFile(
     }
   }
 
-  if (bestTermCount === 0) {
+  if (bestTermCount === 0 || bestTermCount < minRequiredTerms) {
     return null;
   }
 
