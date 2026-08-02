@@ -8,6 +8,7 @@ import { SidebarProvider } from "./sidebarProvider";
 import { findDuplicateClassGroups } from "./duplicates";
 import type { SearchResult } from "./types";
 import { computeReplacements } from "./classReplacer";
+import { filterCandidateFiles } from "./replacePreview";
 
 let indexer: WorkspaceIndexer | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
@@ -220,8 +221,8 @@ async function runReplaceCommand(): Promise<void> {
   const targetClasses = isStyle ? parsePastedStyleList(rawFind) : parsePastedClassList(rawFind);
   const replacementClasses = isStyle ? parsePastedStyleList(rawReplace) : parsePastedClassList(rawReplace);
 
-  if (targetClasses.length === 0) {
-    vscode.window.showWarningMessage("Smart Class Search: invalid target classes.");
+  if (targetClasses.length === 0 && !rawFind.trim()) {
+    vscode.window.showWarningMessage("Smart Class Search: invalid target.");
     return;
   }
 
@@ -229,16 +230,8 @@ async function runReplaceCommand(): Promise<void> {
   let totalOccurrences = 0;
   let filesCount = 0;
 
-  const targetSet = new Set(targetClasses.map((t) => t.toLowerCase()));
   const index = indexer.getIndex();
-  const matchedFiles: string[] = [];
-
-  for (const entry of index.values()) {
-    const hasMatch = Array.from(entry.classes).some((c) => targetSet.has(c.toLowerCase()));
-    if (hasMatch) {
-      matchedFiles.push(entry.file);
-    }
-  }
+  const matchedFiles = filterCandidateFiles(index, targetClasses, rawFind);
 
   if (matchedFiles.length === 0) {
     vscode.window.showInformationMessage("Smart Class Replace: No matching files found in the index.");
@@ -262,7 +255,7 @@ async function runReplaceCommand(): Promise<void> {
         }
 
         const source = document.getText();
-        const edits = computeReplacements(source, targetClasses, replacementClasses);
+        const edits = computeReplacements(source, targetClasses, replacementClasses, rawFind, rawReplace);
         if (edits.length > 0) {
           filesCount++;
           totalOccurrences += edits.length;

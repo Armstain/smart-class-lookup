@@ -103,20 +103,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const targetClasses = isStyle ? parsePastedStyleList(target) : parsePastedClassList(target);
           const replacementClasses = isStyle ? parsePastedStyleList(replacement) : parsePastedClassList(replacement);
 
-          if (targetClasses.length === 0) {
-            vscode.window.showWarningMessage("Smart Class Search: invalid target classes.");
+          if (targetClasses.length === 0 && !target.trim()) {
+            vscode.window.showWarningMessage("Smart Class Search: invalid target.");
             return;
           }
 
           const index = this.indexer.getIndex();
-          const candidateFiles = filterCandidateFiles(index, targetClasses);
+          const candidateFiles = filterCandidateFiles(index, targetClasses, target);
           if (candidateFiles.length === 0) {
             webviewView.webview.postMessage({ type: "replacePreview", target, replacement, occurrences: [] });
             return;
           }
 
           const sources = await this.readSources(candidateFiles);
-          const occurrences = collectReplacements(sources, targetClasses, replacementClasses);
+          const occurrences = collectReplacements(sources, targetClasses, replacementClasses, target, replacement);
 
           const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
           const webviewOccurrences = occurrences.map((o) => ({
@@ -147,17 +147,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const targetClasses = isStyle ? parsePastedStyleList(target) : parsePastedClassList(target);
           const replacementClasses = isStyle ? parsePastedStyleList(replacement) : parsePastedClassList(replacement);
 
-          if (targetClasses.length === 0) {
-            vscode.window.showWarningMessage("Smart Class Search: invalid target classes.");
+          if (targetClasses.length === 0 && !target.trim()) {
+            vscode.window.showWarningMessage("Smart Class Search: invalid target.");
             return;
           }
 
           const index = this.indexer.getIndex();
-          const candidateFiles = filterCandidateFiles(index, targetClasses);
+          const candidateFiles = filterCandidateFiles(index, targetClasses, target);
           // Re-read current source rather than reusing the preview: a changed file's occurrence
           // won't reproduce the same key, so it's dropped and reported as skipped.
           const sources = await this.readSources(candidateFiles);
-          const { applied, skippedCount } = applySelectedEdits(sources, targetClasses, replacementClasses, selectedKeys);
+          const { applied, skippedCount } = applySelectedEdits(sources, targetClasses, replacementClasses, selectedKeys, target, replacement);
 
           if (applied.length === 0) {
             vscode.window.showInformationMessage(
@@ -207,6 +207,43 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const result = data.result as SearchResult;
           const locationIndex = data.locationIndex as number;
           await openAndHighlight(result, locationIndex, false);
+          this.previewEditor = undefined;
+          break;
+        }
+        case "previewOccurrence": {
+          const file = data.file as string;
+          const line = data.line as number;
+          const context = (data.context as string) ?? "";
+          const syntheticResult: SearchResult = {
+            file,
+            matchedCount: 1,
+            totalInputCount: 1,
+            score: 1.0,
+            matchedClasses: [],
+            unmatchedClasses: [],
+            nearMatches: [],
+            locations: [{ file, line, column: 0, context }],
+            maxLineMatches: 1,
+          };
+          this.previewEditor = await openAndHighlight(syntheticResult, 0, true);
+          break;
+        }
+        case "openOccurrence": {
+          const file = data.file as string;
+          const line = data.line as number;
+          const context = (data.context as string) ?? "";
+          const syntheticResult: SearchResult = {
+            file,
+            matchedCount: 1,
+            totalInputCount: 1,
+            score: 1.0,
+            matchedClasses: [],
+            unmatchedClasses: [],
+            nearMatches: [],
+            locations: [{ file, line, column: 0, context }],
+            maxLineMatches: 1,
+          };
+          await openAndHighlight(syntheticResult, 0, false);
           this.previewEditor = undefined;
           break;
         }
@@ -843,6 +880,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     function closeReplacePreview() {
       replacePreviewContainer.style.display = 'none';
       resultsContainer.style.display = '';
+      vscode.postMessage({ type: 'clearPreview' });
     }
 
     replaceCancelBtn.addEventListener('click', () => {
@@ -1309,8 +1347,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
           row.addEventListener('click', (e) => {
             if (e.target === checkbox) return;
-            checkbox.checked = !checkbox.checked;
-            checkbox.dispatchEvent(new Event('change'));
+            vscode.postMessage({
+              type: 'openOccurrence',
+              file: o.file,
+              line: o.line,
+              context: o.before,
+            });
+          });
+
+          row.addEventListener('mouseenter', () => {
+            if (hoverPreviewToggle.checked) {
+              vscode.postMessage({
+                type: 'previewOccurrence',
+                file: o.file,
+                line: o.line,
+                context: o.before,
+              });
+            }
           });
 
           rowCheckboxes.push(checkbox);
@@ -1332,12 +1385,35 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         header.addEventListener('click', (e) => {
           if (e.target === fileCheckbox) return;
-          fileCheckbox.checked = !fileCheckbox.checked;
-          fileCheckbox.dispatchEvent(new Event('change'));
+          const firstOcc = group.occurrences[0];
+          if (firstOcc) {
+            vscode.postMessage({
+              type: 'openOccurrence',
+              file: firstOcc.file,
+              line: firstOcc.line,
+              context: firstOcc.before,
+            });
+          }
+        });
+
+        header.addEventListener('mouseenter', () => {
+          const firstOcc = group.occurrences[0];
+          if (firstOcc && hoverPreviewToggle.checked) {
+            vscode.postMessage({
+              type: 'previewOccurrence',
+              file: firstOcc.file,
+              line: firstOcc.line,
+              context: firstOcc.before,
+            });
+          }
         });
 
         refreshFileCheckbox();
         replacePreviewList.appendChild(groupEl);
+      });
+
+      replacePreviewList.addEventListener('mouseleave', () => {
+        vscode.postMessage({ type: 'clearPreview' });
       });
 
       updateReplaceApplyBtn();

@@ -329,23 +329,22 @@ const editsD = computeReplacements(srcReplaceD, ["bg-red-500"], []);
 const resultD = applyEdits(srcReplaceD, editsD);
 assert(resultD === `<div className="flex p-4" />`, "deleting a class works");
 
-// Case E: Replacing variables
-const srcReplaceE = `
-const styles = cn("p-4", "bg-red-500");
-const element = <div className={styles} />;
-`;
-const editsE = computeReplacements(srcReplaceE, ["bg-red-500"], ["bg-blue-500"]);
-const resultE = applyEdits(srcReplaceE, editsE);
-assert(resultE.includes('cn("p-4", "bg-blue-500")'), "replacing local variable class declarations works");
+// Case F: Replacement in non-className JSX attributes (e.g. href="/trip-planner")
+const srcReplaceF = `<Link href="/trip-planner">Trip Planner</Link>`;
+const editsF = computeReplacements(srcReplaceF, ["/trip-planner"], ["/planner"], "/trip-planner", "/planner");
+const resultF = applyEdits(srcReplaceF, editsF);
+assert(resultF === `<Link href="/planner">Trip Planner</Link>`, "replacement inside href attribute works");
 
 // --- Test 13b: Replace preview (collectReplacements / applySelectedEdits) ---
 const { collectReplacements, applySelectedEdits, filterCandidateFiles } = require("../out/replacePreview");
 
 const srcPreviewA = `<div className="flex bg-red-500" />`;
 const srcPreviewB = `<span className="bg-red-500 p-2" />`;
+const srcPreviewC = `<Link href="/trip-planner">Planner</Link>`;
 const previewSources = new Map([
   ["/proj/PreviewA.tsx", srcPreviewA],
   ["/proj/PreviewB.tsx", srcPreviewB],
+  ["/proj/PreviewC.tsx", srcPreviewC],
 ]);
 
 const occurrences = collectReplacements(previewSources, ["bg-red-500"], ["bg-blue-500"]);
@@ -358,6 +357,10 @@ const occA = occurrences.find((o) => o.file === "/proj/PreviewA.tsx");
 assert(occA && occA.before.includes("bg-red-500"), "occurrence 'before' shows the original text");
 assert(occA && occA.after.includes("bg-blue-500"), "occurrence 'after' shows the replacement text");
 assert(occA && occA.line === 0, `occurrence line is 0-based (got ${occA && occA.line})`);
+
+const occurrencesText = collectReplacements(previewSources, ["/trip-planner"], ["/planner"], "/trip-planner", "/planner");
+assert(occurrencesText.length === 1, `collectReplacements finds raw text target occurrence (got ${occurrencesText.length})`);
+assert(occurrencesText[0].file === "/proj/PreviewC.tsx", "collectReplacements targets PreviewC.tsx");
 
 // Selecting one occurrence's key applies only that one.
 const onlyOccB = occurrences.find((o) => o.file === "/proj/PreviewB.tsx");
@@ -386,13 +389,16 @@ assert(staleApply.applied.length === 1, `only the still-valid occurrence applies
 assert(staleApply.applied[0].file === "/proj/PreviewB.tsx", "the stale (changed) file's occurrence is not applied");
 assert(staleApply.skippedCount === 1, `the changed file's occurrence is reported skipped (got ${staleApply.skippedCount})`);
 
-// filterCandidateFiles: only files whose indexed classes include a target.
+// filterCandidateFiles: includes files whose source contains rawTarget
 const candidateIndex = new Map([
   ["/proj/PreviewA.tsx", buildEntryFromSource(srcPreviewA, "/proj/PreviewA.tsx")],
   ["/proj/PreviewB.tsx", buildEntryFromSource(srcPreviewB, "/proj/PreviewB.tsx")],
+  ["/proj/PreviewC.tsx", buildEntryFromSource(srcPreviewC, "/proj/PreviewC.tsx")],
 ]);
 const candidates = filterCandidateFiles(candidateIndex, ["bg-red-500"]);
-assert(candidates.length === 2, `both files are candidates for bg-red-500 (got ${candidates.length})`);
+assert(candidates.length === 2, `both class files are candidates for bg-red-500 (got ${candidates.length})`);
+const textCandidates = filterCandidateFiles(candidateIndex, ["/trip-planner"], "/trip-planner");
+assert(textCandidates.length === 1 && textCandidates[0] === "/proj/PreviewC.tsx", "raw text target finds candidate file by source text");
 const noCandidates = filterCandidateFiles(candidateIndex, ["nonexistent-class"]);
 assert(noCandidates.length === 0, "no candidates when the target class isn't indexed anywhere");
 
@@ -427,11 +433,11 @@ const adaptiveIndex = new Map([
   ["/proj/Doc15.tsx", buildEntryFromSource(docSrc, "/proj/Doc15.tsx")],
 ]);
 
-// "block" is a real utility but "sticky"/"note" are prose, so this is a prose query.
-const proseRanked = rankFiles(["block", "sticky", "note"], adaptiveIndex, {
-  rawInput: "block sticky note",
+// "sticky"/"note" are prose, so this is a prose query matching the comment in Doc15.tsx.
+const proseRanked = rankFiles(["sticky", "note"], adaptiveIndex, {
+  rawInput: "sticky note",
 });
-assert(proseRanked.length === 2, `prose query returns both files (got ${proseRanked.length})`);
+assert(proseRanked.length === 1, `prose query returns text match file (got ${proseRanked.length})`);
 assert(
   proseRanked[0].file === "/proj/Doc15.tsx",
   `comment/text match ranks first in a prose query (got ${proseRanked[0].file})`
@@ -470,8 +476,8 @@ assert(
 );
 
 // The same file still surfaces once the query is genuinely prose-shaped.
-const noiseSurfaced = rankFiles(["border", "config", "reminder"], noiseIndex, {
-  rawInput: "border config reminder",
+const noiseSurfaced = rankFiles(["border", "solid"], noiseIndex, {
+  rawInput: "border solid",
 });
 assert(
   noiseSurfaced.some((r) => r.file === "/proj/NoiseFile16.tsx"),

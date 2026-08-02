@@ -22,7 +22,9 @@ export interface TextEdit {
 export function replaceClassesInString(
   value: string,
   targetClasses: string[],
-  replacementClasses: string[]
+  replacementClasses: string[],
+  rawTarget?: string,
+  rawReplacement?: string
 ): { newValue: string; changed: boolean } {
   if (!value.trim()) {
     return { newValue: value, changed: false };
@@ -48,32 +50,40 @@ export function replaceClassesInString(
     return part;
   });
 
-  if (!changed) {
-    return { newValue: value, changed: false };
+  if (changed) {
+    let newValue = processedParts.join("");
+    const leadingSpace = /^\s/.test(value);
+    const trailingSpace = /\s$/.test(value);
+
+    newValue = newValue.replace(/\s+/g, " ").trim();
+
+    if (leadingSpace && newValue) {
+      newValue = " " + newValue;
+    }
+    if (trailingSpace && newValue) {
+      newValue = newValue + " ";
+    }
+
+    return { newValue, changed: true };
   }
 
-  let newValue = processedParts.join("");
-  const leadingSpace = /^\s/.test(value);
-  const trailingSpace = /\s$/.test(value);
-
-  newValue = newValue.replace(/\s+/g, " ").trim();
-
-  if (leadingSpace && newValue) {
-    newValue = " " + newValue;
-  }
-  if (trailingSpace && newValue) {
-    newValue = newValue + " ";
+  // Fallback: raw target string replacement inside string value
+  if (rawTarget && rawTarget.trim() && value.includes(rawTarget)) {
+    const newValue = value.split(rawTarget).join(rawReplacement ?? "");
+    return { newValue, changed: true };
   }
 
-  return { newValue, changed: true };
+  return { newValue: value, changed: false };
 }
 
 export function computeReplacements(
   source: string,
   targetClasses: string[],
-  replacementClasses: string[]
+  replacementClasses: string[],
+  rawTarget?: string,
+  rawReplacement?: string
 ): TextEdit[] {
-  let ast;
+  let ast: t.File | null = null;
   try {
     ast = parse(source, {
       sourceType: "module",
@@ -81,7 +91,7 @@ export function computeReplacements(
       errorRecovery: true,
     });
   } catch {
-    return [];
+    ast = null;
   }
 
   const edits: TextEdit[] = [];
@@ -90,7 +100,13 @@ export function computeReplacements(
   const handleStringValue = (value: string, start: number, end: number, isQuasi = false) => {
     if (editedStarts.has(start)) return;
 
-    const { newValue, changed } = replaceClassesInString(value, targetClasses, replacementClasses);
+    const { newValue, changed } = replaceClassesInString(
+      value,
+      targetClasses,
+      replacementClasses,
+      rawTarget,
+      rawReplacement
+    );
     if (changed) {
       editedStarts.add(start);
       if (isQuasi) {
@@ -104,147 +120,64 @@ export function computeReplacements(
     }
   };
 
-  const varInitializers = new Map<string, t.Node>();
-  traverse(ast, {
-    VariableDeclarator(path: NodePath<t.VariableDeclarator>) {
-      const id = path.node.id;
-      if (id.type === "Identifier" && path.node.init) {
-        varInitializers.set(id.name, path.node.init);
-      }
-    },
-  });
-
-  const CLASS_HELPER_NAMES = new Set(["cn", "clsx", "classnames", "classNames", "twMerge", "cx"]);
-  const resolvingVars = new Set<string>();
-
-  function processNode(node: t.Node | null | undefined): void {
-    if (!node) return;
-
-    switch (node.type) {
-      case "StringLiteral": {
-        if (typeof node.start === "number" && typeof node.end === "number") {
-          handleStringValue(node.value, node.start, node.end, false);
+  if (ast) {
+    traverse(ast, {
+      StringLiteral(path: NodePath<t.StringLiteral>) {
+        if (typeof path.node.start === "number" && typeof path.node.end === "number") {
+          handleStringValue(path.node.value, path.node.start, path.node.end, false);
         }
-        break;
-      }
-      case "TemplateLiteral": {
-        for (const quasi of node.quasis) {
+      },
+      TemplateLiteral(path: NodePath<t.TemplateLiteral>) {
+        for (const quasi of path.node.quasis) {
           if (typeof quasi.start === "number" && typeof quasi.end === "number") {
             handleStringValue(quasi.value.raw, quasi.start, quasi.end, true);
           }
         }
-        for (const expr of node.expressions) {
-          processNode(expr as t.Node);
+      },
+      JSXText(path: NodePath<t.JSXText>) {
+        const val = path.node.value;
+        if (typeof path.node.start === "number" && typeof path.node.end === "number") {
+          handleStringValue(val, path.node.start, path.node.end, true);
         }
-        break;
-      }
-      case "JSXExpressionContainer": {
-        processNode(node.expression as t.Node);
-        break;
-      }
-      case "ParenthesizedExpression": {
-        processNode(node.expression);
-        break;
-      }
-      case "ConditionalExpression": {
-        processNode(node.consequent);
-        processNode(node.alternate);
-        break;
-      }
-      case "LogicalExpression": {
-        processNode(node.left);
-        processNode(node.right);
-        break;
-      }
-      case "ArrayExpression": {
-        for (const element of node.elements) {
-          if (element) {
-            if (element.type === "SpreadElement") {
-              processNode(element.argument);
-            } else {
-              processNode(element);
+      },
+      ObjectProperty(path: NodePath<t.ObjectProperty>) {
+        if (!path.node.computed) {
+          const key = path.node.key;
+          if (key.type === "StringLiteral" && typeof key.start === "number" && typeof key.end === "number") {
+            handleStringValue(key.value, key.start, key.end, false);
+          } else if (key.type === "Identifier" && typeof key.start === "number" && typeof key.end === "number") {
+            const targetSet = new Set(targetClasses.map((t) => t.toLowerCase()));
+            if (targetSet.has(key.name.toLowerCase()) && !editedStarts.has(key.start)) {
+              editedStarts.add(key.start);
+              edits.push({
+                start: key.start,
+                end: key.end,
+                newText: replacementClasses.join(" "),
+              });
             }
           }
         }
-        break;
-      }
-      case "ObjectExpression": {
-        for (const prop of node.properties) {
-          if (prop.type !== "ObjectProperty") continue;
-          if (!prop.computed) {
-            const key = prop.key;
-            if (key.type === "StringLiteral" && typeof key.start === "number" && typeof key.end === "number") {
-              handleStringValue(key.value, key.start, key.end, false);
-            } else if (key.type === "Identifier" && typeof key.start === "number" && typeof key.end === "number") {
-              const targetSet = new Set(targetClasses.map((t) => t.toLowerCase()));
-              if (targetSet.has(key.name.toLowerCase()) && !editedStarts.has(key.start)) {
-                editedStarts.add(key.start);
-                edits.push({
-                  start: key.start,
-                  end: key.end,
-                  newText: replacementClasses.join(" "),
-                });
-              }
-            }
-          }
-          processNode(prop.value as t.Node);
-        }
-        break;
-      }
-      case "CallExpression": {
-        const callee = node.callee;
-        const calleeName =
-          callee.type === "Identifier"
-            ? callee.name
-            : callee.type === "MemberExpression" && callee.property.type === "Identifier"
-            ? callee.property.name
-            : undefined;
+      },
+    });
+  }
 
-        if (calleeName && CLASS_HELPER_NAMES.has(calleeName)) {
-          for (const arg of node.arguments) {
-            processNode(arg as t.Node);
-          }
-        }
-        break;
-      }
-      case "Identifier": {
-        const name = node.name;
-        if (varInitializers.has(name) && !resolvingVars.has(name)) {
-          resolvingVars.add(name);
-          processNode(varInitializers.get(name));
-          resolvingVars.delete(name);
-        }
-        break;
+  // Fallback if AST failed or produced no edits but rawTarget / targetClasses exist in source
+  if (edits.length === 0 && (rawTarget?.trim() || targetClasses.length > 0)) {
+    const findTerm = rawTarget?.trim() || targetClasses[0];
+    if (findTerm && source.includes(findTerm)) {
+      const replaceTerm = rawReplacement ?? replacementClasses.join(" ");
+      let pos = source.indexOf(findTerm);
+      while (pos !== -1) {
+        edits.push({
+          start: pos,
+          end: pos + findTerm.length,
+          newText: replaceTerm,
+        });
+        pos = source.indexOf(findTerm, pos + findTerm.length);
       }
     }
   }
 
-  traverse(ast, {
-    JSXAttribute(path: NodePath<t.JSXAttribute>) {
-      const name = path.node.name;
-      if (name.type === "JSXIdentifier" && name.name === "className") {
-        processNode(path.node.value as t.Node | null);
-      }
-    },
-    CallExpression(path: NodePath<t.CallExpression>) {
-      const callee = path.node.callee;
-      const calleeName =
-        callee.type === "Identifier"
-          ? callee.name
-          : callee.type === "MemberExpression" && callee.property.type === "Identifier"
-          ? callee.property.name
-          : undefined;
-
-      if (calleeName && CLASS_HELPER_NAMES.has(calleeName)) {
-        for (const arg of path.node.arguments) {
-          processNode(arg as t.Node);
-        }
-      }
-    },
-    ArrayExpression(path: NodePath<t.ArrayExpression>) {
-      processNode(path.node);
-    },
-  });
-
   return edits.sort((a, b) => b.start - a.start);
 }
+

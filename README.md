@@ -8,13 +8,11 @@ when your codebase spreads those classes across `cn()`, `clsx()`,
 A plain text/regex search for the DevTools string will never find any of
 these. Smart Class Search will.
 
-## What's New in v0.3.2
+## What's New in v0.3.3
 
-- **Instant Cold Startup**: Optimized workspace indexing with non-blocking event-loop yields for 0ms sidebar startup.
-- **Smart Code & Identifier Search**: Text search now matches camelCase, snake_case, and kebab-case identifiers (`signIn`, `sign_in`, `sign-in`).
-- **Precise Stop-Word Filtering**: Word-boundary checks prevent short terms (`in`, `on`, `at`) from matching inside unrelated words like `insured`.
-- **Sidebar Line Snippets**: Location line snippets with highlighted matches display under every result in the sidebar tree.
-- **Smooth Editor Live Preview**: Instant live editor preview when hovering or navigating results without losing focus.
+- **Universal Replace System**: Text and class replacement now covers all JSX attributes (`href`, `src`, `id`), string literals, template literals, imports, JSX text, and non-AST files.
+- **Source-Aware Candidate Filtering**: Replace target matching scans source text alongside indexed CSS classes, fixing empty occurrence lists on text search targets.
+- **Replace Preview Live Editor Previewing**: Hovering or clicking occurrences/file headers in the Replace Preview pane live-previews and navigates directly to those lines in the editor.
 
 ## Examples
 

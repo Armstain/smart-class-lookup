@@ -1,5 +1,12 @@
 # Change Log
 
+## [0.3.3]
+
+### Fixed & Improved
+- **Universal Replace Engine**: Expanded class and text replacement to cover all JSX attributes (`href`, `src`, `id`), string literals, template literals, imports, JSX text, and non-AST files.
+- **Source-Aware Candidate Filtering**: Candidate file selection for Replace now searches file source text in addition to indexed CSS classes, guaranteeing text search targets (like `/trip-planner`) match candidate files.
+- **Replace Preview Live Editor Previewing**: Added hover live previewing and click-to-open navigation for occurrences and file headers in the Replace Preview pane.
+
 ## [0.3.2]
 
 ### Added & Improved
