@@ -2,14 +2,14 @@
   "name": "smart-class-lookup",
   "displayName": "Smart Class Search",
   "description": "Paste classes copied from DevTools and instantly find the matching component in your workspace. Built for Tailwind — supports cn(), clsx(), classnames(), template literals, arrays, ternaries, and conditional classNames.",
-  "version": "0.3.3",
-  "publisher": "nazmul-hossain-adnan",
+  "version": "0.4.0",
+  "publisher": "armstain",
   "icon": "resources/logo.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/Armstain/smart-class-lookup"
   },
-  "private": true,
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -23,10 +23,15 @@
     "uno",
     "search",
     "clsx",
-    "cn"
+    "cn",
+    "vue",
+    "svelte",
+    "astro",
+    "html",
+    "blade"
   ],
   "activationEvents": [],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -68,12 +73,26 @@
         "category": "Smart Class Search"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "smartClassLookup.search",
+          "when": "editorHasSelection",
+          "group": "navigation@100"
+        },
+        {
+          "command": "smartClassLookup.replace",
+          "when": "editorHasSelection",
+          "group": "navigation@101"
+        }
+      ]
+    },
     "configuration": {
       "title": "Smart Class Search",
       "properties": {
         "smartClassLookup.include": {
           "type": "string",
-          "default": "**/*.{ts,tsx,js,jsx}",
+          "default": "**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs}",
           "description": "Glob pattern (relative to each workspace folder) for files to index."
         },
         "smartClassLookup.exclude": {
@@ -105,9 +124,10 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run typecheck && npm run bundle",
+    "bundle": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify --sourcemap",
+    "watch": "npm run bundle -- --watch",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
     "typecheck": "tsc --noEmit -p ./",
     "test": "npm run compile && node test/smoke.js"
   },
@@ -115,6 +135,7 @@
     "@types/babel__traverse": "^7.20.5",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.4.5",
     "vsce": "^2.15.0"
   },

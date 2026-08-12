@@ -1,6 +1,18 @@
+# src/ and node_modules/ are excluded because esbuild inlines both into dist/extension.js.
+# @babel/parser and @babel/traverse stay in "dependencies" so the bundle step can resolve them —
+# dropping this file would ship them twice.
 .vscode/**
+.github/**
+.claude/**
 .gitignore
-tsconfig.json
+# Duplicate of resources/logo.png (1.2MB); the manifest icon points at the resources/ copy.
+logo.png
+node_modules/**
+out/**
 src/**
+test/**
+test-replace.tsx
+tsconfig.json
+package-lock.json
+**/*.vsix
 **/*.map
-**/.eslintrc.json
