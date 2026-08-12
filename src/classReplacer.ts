@@ -2,6 +2,7 @@ import { parse } from "@babel/parser";
 import traverse, { type NodePath } from "@babel/traverse";
 import type * as t from "@babel/types";
 import { tokenize } from "./classParser";
+import { isMarkupFile, scanClassAttributes, scanClassDirectives } from "./markupExtractor";
 
 const BABEL_PLUGINS: import("@babel/parser").ParserPlugin[] = [
   "jsx",
@@ -76,25 +77,76 @@ export function replaceClassesInString(
   return { newValue: value, changed: false };
 }
 
-export function computeReplacements(
+// Class replacement for markup (.vue/.svelte/.astro/.html/...). Babel can only reach these
+// files through JSX error recovery, which silently skips whatever it fails to parse and would
+// leave a partial replace behind — so class attributes are edited from the same scanner the
+// markup indexer uses.
+// ponytail: class attributes only — a class inside a .vue/.svelte <script> cn() call is left to
+// the raw-text fallback below. Parse the embedded script blocks here if that becomes a real ask.
+function computeMarkupReplacements(
   source: string,
   targetClasses: string[],
   replacementClasses: string[],
   rawTarget?: string,
   rawReplacement?: string
 ): TextEdit[] {
-  let ast: t.File | null = null;
-  try {
-    ast = parse(source, {
-      sourceType: "module",
-      plugins: BABEL_PLUGINS,
-      errorRecovery: true,
-    });
-  } catch {
-    ast = null;
+  const edits: TextEdit[] = [];
+
+  for (const attr of scanClassAttributes(source)) {
+    for (const segment of attr.segments) {
+      const { newValue, changed } = replaceClassesInString(
+        segment.text,
+        targetClasses,
+        replacementClasses,
+        rawTarget,
+        rawReplacement
+      );
+      if (changed) {
+        edits.push({ start: segment.start, end: segment.end, newText: newValue });
+      }
+    }
   }
 
-  const edits: TextEdit[] = [];
+  const targetSet = new Set(targetClasses.map((t) => t.toLowerCase()));
+  for (const directive of scanClassDirectives(source)) {
+    if (targetSet.has(directive.text.toLowerCase())) {
+      edits.push({
+        start: directive.start,
+        end: directive.end,
+        newText: replacementClasses.join(" "),
+      });
+    }
+  }
+
+  return edits;
+}
+
+export function computeReplacements(
+  source: string,
+  targetClasses: string[],
+  replacementClasses: string[],
+  rawTarget?: string,
+  rawReplacement?: string,
+  filePath?: string
+): TextEdit[] {
+  const markup = filePath !== undefined && isMarkupFile(filePath);
+
+  let ast: t.File | null = null;
+  if (!markup) {
+    try {
+      ast = parse(source, {
+        sourceType: "module",
+        plugins: BABEL_PLUGINS,
+        errorRecovery: true,
+      });
+    } catch {
+      ast = null;
+    }
+  }
+
+  const edits: TextEdit[] = markup
+    ? computeMarkupReplacements(source, targetClasses, replacementClasses, rawTarget, rawReplacement)
+    : [];
   const editedStarts = new Set<number>();
 
   const handleStringValue = (value: string, start: number, end: number, isQuasi = false) => {

@@ -2,7 +2,14 @@ import { parse } from "@babel/parser";
 import traverse, { type NodePath } from "@babel/traverse";
 import type * as t from "@babel/types";
 import { tokenize, normalizeStyleKey, normalizeStyleValue } from "./classParser";
-import type { ClassLocation } from "./types";
+import {
+  embeddedScriptBlocks,
+  extractClassesFromMarkup,
+  isMarkupFile,
+} from "./markupExtractor";
+import type { ClassLocation, ExtractedClass, ExtractionResult } from "./types";
+
+export type { ExtractedClass, ExtractionResult } from "./types";
 
 const CLASS_HELPER_NAMES = new Set([
   "cn",
@@ -12,16 +19,6 @@ const CLASS_HELPER_NAMES = new Set([
   "twMerge",
   "cx",
 ]);
-
-export interface ExtractedClass {
-  className: string;
-  location: ClassLocation;
-}
-
-export interface ExtractionResult {
-  classes: ExtractedClass[];
-  parseError?: string;
-}
 
 const BABEL_PLUGINS: import("@babel/parser").ParserPlugin[] = [
   "jsx",
@@ -38,7 +35,13 @@ const BABEL_PLUGINS: import("@babel/parser").ParserPlugin[] = [
 // `style` JSX attribute, a call to one of CLASS_HELPER_NAMES, or *any* array literal (`[`)
 // in the file. Deliberately conservative — a false "maybe" just costs an unneeded parse;
 // a false "never" would silently drop real classes, which must never happen.
-export function canPossiblyContainClasses(source: string): boolean {
+export function canPossiblyContainClasses(source: string, filePath?: string): boolean {
+  // Markup files carry classes in a `class`/`class:`/`:class` attribute, none of which the
+  // JS-shaped checks below would see. Kept as its own branch so the `class` substring (which
+  // every TS file with a `class` declaration contains) doesn't defeat the fast skip for JS.
+  if (filePath && isMarkupFile(filePath)) {
+    return source.includes("class");
+  }
   if (source.includes("className") || source.includes("style") || source.includes("[")) {
     return true;
   }
@@ -51,6 +54,23 @@ export function canPossiblyContainClasses(source: string): boolean {
 export function extractClassesFromSource(
   source: string,
   filePath: string
+): ExtractionResult {
+  if (isMarkupFile(filePath)) {
+    const classes = extractClassesFromMarkup(source, filePath);
+    // .vue/.svelte <script> blocks and .astro frontmatter are real JS/TS — run them through the
+    // same Babel path so cn()/clsx()/ternaries/local variables resolve there too.
+    for (const { code, lineOffset } of embeddedScriptBlocks(source)) {
+      classes.push(...extractClassesFromJs(code, filePath, lineOffset).classes);
+    }
+    return { classes };
+  }
+  return extractClassesFromJs(source, filePath, 0);
+}
+
+function extractClassesFromJs(
+  source: string,
+  filePath: string,
+  lineOffset: number
 ): ExtractionResult {
   let ast;
   try {
@@ -84,7 +104,7 @@ export function extractClassesFromSource(
     const contextLine = sourceLines[lineIndex] ?? raw;
     const location: ClassLocation = {
       file: filePath,
-      line: lineIndex,
+      line: lineIndex + lineOffset,
       column: loc ? loc.start.column : 0,
       context: contextLine.trim().slice(0, 140),
     };
@@ -235,7 +255,7 @@ export function extractClassesFromSource(
           const contextLine = sourceLines[lineIndex] ?? `${key}: ${valNode.value}`;
           const location: ClassLocation = {
             file: filePath,
-            line: lineIndex,
+            line: lineIndex + lineOffset,
             column: loc ? loc.start.column : 0,
             context: contextLine.trim().slice(0, 140),
           };
@@ -251,7 +271,7 @@ export function extractClassesFromSource(
       if (name.type !== "JSXIdentifier") {
         return;
       }
-      if (name.name === "className") {
+      if (name.name === "className" || name.name === "class") {
         collectFromExpression(path.node.value as t.Node | null);
         path.skip();
       } else if (name.name === "style") {

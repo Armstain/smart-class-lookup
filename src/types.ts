@@ -5,6 +5,16 @@ export interface ClassLocation {
   context: string;
 }
 
+export interface ExtractedClass {
+  className: string;
+  location: ClassLocation;
+}
+
+export interface ExtractionResult {
+  classes: ExtractedClass[];
+  parseError?: string;
+}
+
 export interface FileIndexEntry {
   file: string;
   classes: Set<string>;

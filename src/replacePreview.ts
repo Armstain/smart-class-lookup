@@ -80,7 +80,7 @@ function computeOccurrences(
   const dupCounts = new Map<string, number>();
 
   for (const [file, source] of sources) {
-    const edits = computeReplacements(source, targetClasses, replacementClasses, rawTarget, rawReplacement);
+    const edits = computeReplacements(source, targetClasses, replacementClasses, rawTarget, rawReplacement, file);
     // computeReplacements sorts descending by start; read ascending so occurrence order reads top-to-bottom.
     const ordered = [...edits].sort((a, b) => a.start - b.start);
     for (const edit of ordered) {

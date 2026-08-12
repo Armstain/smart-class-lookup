@@ -503,4 +503,215 @@ assert(ranked17[0].file === "/proj/FullMatch.tsx", `100% match file ranks FIRST 
 assert(ranked17[0].score === 1.0, `top result has score 1.0 (got ${ranked17[0].score})`);
 assert(ranked17[1].file === "/proj/PartialMatch.tsx", `partial match file ranks SECOND (got ${ranked17[1].file})`);
 
+// --- Test 18: Markup files (.vue/.svelte/.astro/.html/.php) ---
+const { isMarkupFile } = require("../out/markupExtractor");
+
+assert(isMarkupFile("/proj/App.vue"), "isMarkupFile recognizes .vue");
+assert(isMarkupFile("/proj/App.SVELTE"), "isMarkupFile is case-insensitive");
+assert(!isMarkupFile("/proj/App.tsx"), "isMarkupFile rejects .tsx");
+assert(!isMarkupFile("/proj/Makefile"), "isMarkupFile rejects an extension-less path");
+
+// Plain HTML class attribute.
+const htmlEntry = buildEntryFromSource(
+  `<div class="p-4 flex rounded-lg">\n  <span class='text-white'>hi</span>\n</div>`,
+  "/proj/page.html"
+);
+for (const cls of ["p-4", "flex", "rounded-lg", "text-white"]) {
+  assert(htmlEntry.classes.has(cls), `page.html extracted "${cls}" from a class attribute`);
+}
+assert(
+  htmlEntry.locations.get("text-white")[0].line === 1,
+  `html location is on the right 0-based line (got ${htmlEntry.locations.get("text-white")[0].line})`
+);
+
+// Vue: static class, dynamic :class object map, and a <script> block using cn().
+const vueSrc = `<template>
+  <div class="p-4 flex" :class="{ 'bg-red-500': isError, 'text-white': true }">
+    {{ msg }}
+  </div>
+  <button v-bind:class="isOpen ? 'rounded-lg' : 'rounded-none'">go</button>
+</template>
+
+<script setup>
+const cardStyles = cn("shadow-md", isBig && "mb-12");
+</script>
+`;
+const vueEntry = buildEntryFromSource(vueSrc, "/proj/Card.vue");
+for (const cls of ["p-4", "flex", "bg-red-500", "text-white", "rounded-lg", "rounded-none"]) {
+  assert(vueEntry.classes.has(cls), `Card.vue extracted "${cls}" from the template`);
+}
+for (const cls of ["shadow-md", "mb-12"]) {
+  assert(vueEntry.classes.has(cls), `Card.vue extracted "${cls}" from the <script> block via cn()`);
+}
+// The <script> block's classes must be reported at their real line in the .vue file, not at
+// their line within the extracted script substring.
+assert(
+  vueEntry.locations.get("shadow-md")[0].line === 8,
+  `Card.vue <script> class keeps its absolute line 8 (got ${vueEntry.locations.get("shadow-md")[0].line})`
+);
+// Vue interpolation and directive names must not leak in as classes.
+for (const garbage of ["{{", "msg", "isError", "isOpen", "?", ":"]) {
+  assert(!vueEntry.classes.has(garbage), `Card.vue does not leak "${garbage}" as a class`);
+}
+
+// Svelte: class={expr}, the class:foo directive, and a <script> block.
+const svelteSrc = `<script>
+  const base = cn("px-5", "pb-5");
+</script>
+
+<div class={isOpen ? "shadow-md" : "shadow-none"} class:bg-base-200={dark}>
+  <p class="pt-4">x</p>
+</div>
+`;
+const svelteEntry = buildEntryFromSource(svelteSrc, "/proj/Panel.svelte");
+for (const cls of ["px-5", "pb-5", "shadow-md", "shadow-none", "bg-base-200", "pt-4"]) {
+  assert(svelteEntry.classes.has(cls), `Panel.svelte extracted "${cls}"`);
+}
+assert(!svelteEntry.classes.has("dark"), "Panel.svelte does not treat the class: directive value as a class");
+
+// Astro: frontmatter JS + class:list array.
+const astroSrc = `---
+const wrapper = cn("relative", "z-10");
+---
+
+<div class:list={["gap-2", isActive && "items-center"]} class="mx-auto">
+  <slot />
+</div>
+`;
+const astroEntry = buildEntryFromSource(astroSrc, "/proj/Layout.astro");
+for (const cls of ["relative", "z-10", "gap-2", "items-center", "mx-auto"]) {
+  assert(astroEntry.classes.has(cls), `Layout.astro extracted "${cls}"`);
+}
+assert(!astroEntry.classes.has("list"), "Astro class:list is not mistaken for a class: directive");
+assert(
+  astroEntry.locations.get("relative")[0].line === 1,
+  `Astro frontmatter class keeps its absolute line 1 (got ${astroEntry.locations.get("relative")[0].line})`
+);
+
+// Blade/PHP markup still works through the plain-attribute path.
+const phpEntry = buildEntryFromSource(
+  `<div class="flex items-center"><?php echo $name; ?></div>`,
+  "/proj/card.blade.php"
+);
+assert(phpEntry.classes.has("flex") && phpEntry.classes.has("items-center"), "Blade/PHP markup extracts classes");
+
+// Arbitrary values containing quotes are real classes, not expressions.
+const arbitraryMarkup = buildEntryFromSource(
+  `<div class="before:content-[''] content-['hi'] p-4"></div>`,
+  "/proj/arb.html"
+);
+for (const cls of ["before:content-['']", "content-['hi']", "p-4"]) {
+  assert(arbitraryMarkup.classes.has(cls), `quoted arbitrary value "${cls}" survives in markup`);
+}
+// Same token cleaning runs for JSX, so the arbitrary value must survive there too.
+const arbitraryJsx = buildEntryFromSource(`<div className="before:content-[''] p-4" />`, "/proj/Arb.tsx");
+assert(arbitraryJsx.classes.has("before:content-['']"), "quoted arbitrary value survives in JSX");
+// ...without breaking the pasted-array tail, whose `"]` really is punctuation.
+assert(
+  parsePastedClassList('["p-4", "flex"]').join(" ") === "p-4 flex",
+  `pasted array syntax still strips its brackets (got ${parsePastedClassList('["p-4", "flex"]').join(" ")})`
+);
+
+// Template interpolations are skipped, but literal classes beside them are kept.
+const interpolated = buildEntryFromSource(
+  `<div class="{{ $classes }} p-4 flex"></div>\n<span class="<?php echo $x; ?> mb-12"></span>`,
+  "/proj/card.blade.php"
+);
+for (const cls of ["p-4", "flex", "mb-12"]) {
+  assert(interpolated.classes.has(cls), `literal class "${cls}" survives beside an interpolation`);
+}
+for (const garbage of ["{{", "$classes", "}}", "echo", "$x;"]) {
+  assert(!interpolated.classes.has(garbage), `interpolation token "${garbage}" is not indexed as a class`);
+}
+
+// Replacing beside an interpolation must not clobber the interpolation itself.
+const interpSrc = `<div class="{{ $classes }} bg-red-500 p-4"></div>`;
+const interpEdits = computeReplacements(interpSrc, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/i.blade.php");
+assert(
+  applyEdits(interpSrc, interpEdits) === `<div class="{{ $classes }} bg-blue-500 p-4"></div>`,
+  `replacement leaves the interpolation intact (got ${applyEdits(interpSrc, interpEdits)})`
+);
+
+// The fast-skip gate must never reject markup that really does contain classes.
+const { canPossiblyContainClasses } = require("../out/astExtractor");
+assert(
+  canPossiblyContainClasses(`<div class="p-4"></div>`, "/proj/x.html"),
+  "canPossiblyContainClasses accepts markup with a class attribute"
+);
+assert(
+  !canPossiblyContainClasses(`<div id="x">hello</div>`, "/proj/x.html"),
+  "canPossiblyContainClasses skips markup with no class attribute at all"
+);
+assert(
+  canPossiblyContainClasses(`const a = cn("p-4");`, "/proj/x.ts"),
+  "canPossiblyContainClasses still accepts JS via the helper-name check"
+);
+
+// A markup query must actually rank the markup file.
+const markupIndex = new Map([["/proj/Card.vue", vueEntry]]);
+const markupRanked = rankFiles(parsePastedClassList("p-4 flex"), markupIndex, { rawInput: "p-4 flex" });
+assert(markupRanked.length === 1 && markupRanked[0].file === "/proj/Card.vue", "a .vue file is searchable end to end");
+assert(markupRanked[0].score === 1.0, `full markup class match scores 1.0 (got ${markupRanked[0].score})`);
+
+// --- Test 19: Replacement inside markup files ---
+// Static attribute.
+const vueReplaceSrc = `<div class="flex bg-red-500 p-4"></div>`;
+const vueEdits = computeReplacements(vueReplaceSrc, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/A.vue");
+assert(
+  applyEdits(vueReplaceSrc, vueEdits) === `<div class="flex bg-blue-500 p-4"></div>`,
+  "replacement inside a .vue static class attribute works"
+);
+
+// Multiple target classes in one markup attribute — the raw-text fallback only ever handled the
+// first, so this is the case the attribute-aware markup path exists for.
+const multiSrc = `<div class="flex bg-red-500 p-4"></div>`;
+const multiEdits = computeReplacements(multiSrc, ["bg-red-500", "p-4"], ["bg-blue-500"], undefined, undefined, "/proj/M.vue");
+assert(
+  applyEdits(multiSrc, multiEdits) === `<div class="flex bg-blue-500"></div>`,
+  `multi-class markup replacement collapses both targets (got ${applyEdits(multiSrc, multiEdits)})`
+);
+
+// Quoted segment inside a dynamic binding, with the surrounding expression left intact.
+const dynSrc = `<div :class="{ 'bg-red-500': isError, 'p-4': true }"></div>`;
+const dynEdits = computeReplacements(dynSrc, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/B.vue");
+assert(
+  applyEdits(dynSrc, dynEdits) === `<div :class="{ 'bg-blue-500': isError, 'p-4': true }"></div>`,
+  `replacement inside a Vue :class object map works (got ${applyEdits(dynSrc, dynEdits)})`
+);
+
+// Deleting a class out of markup.
+const delSrc = `<div class="flex bg-red-500 p-4"></div>`;
+const delEdits = computeReplacements(delSrc, ["bg-red-500"], [], undefined, undefined, "/proj/C.vue");
+assert(
+  applyEdits(delSrc, delEdits) === `<div class="flex p-4"></div>`,
+  `deleting a class from markup works (got ${applyEdits(delSrc, delEdits)})`
+);
+
+// Svelte class: directive.
+const dirSrc = `<div class:bg-red-500={dark} class="p-4"></div>`;
+const dirEdits = computeReplacements(dirSrc, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/D.svelte");
+assert(
+  applyEdits(dirSrc, dirEdits) === `<div class:bg-blue-500={dark} class="p-4"></div>`,
+  `replacement of a Svelte class: directive works (got ${applyEdits(dirSrc, dirEdits)})`
+);
+
+// A raw-text target in markup still falls through to the text replacement path.
+const hrefSrc = `<a href="/trip-planner" class="p-4">Planner</a>`;
+const hrefEdits = computeReplacements(hrefSrc, ["/trip-planner"], ["/planner"], "/trip-planner", "/planner", "/proj/E.html");
+assert(
+  applyEdits(hrefSrc, hrefEdits) === `<a href="/planner" class="p-4">Planner</a>`,
+  `raw text replacement in markup works (got ${applyEdits(hrefSrc, hrefEdits)})`
+);
+
+// A target that appears nowhere must produce no edits at all.
+const noopEdits = computeReplacements(`<div class="p-4"></div>`, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/F.vue");
+assert(noopEdits.length === 0, `no edits when the target is absent from markup (got ${noopEdits.length})`);
+
+// JS files must be unaffected by the markup path.
+const jsStillWorks = computeReplacements(`<div className="flex bg-red-500" />`, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/G.tsx");
+assert(
+  applyEdits(`<div className="flex bg-red-500" />`, jsStillWorks) === `<div className="flex bg-blue-500" />`,
+  "the AST path is still used for .tsx when a filePath is passed"
+);
+
 console.log("\nDone.");

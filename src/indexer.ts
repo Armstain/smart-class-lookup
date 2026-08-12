@@ -4,7 +4,8 @@ import { canPossiblyContainClasses, extractClassesFromSource } from "./astExtrac
 import { buildArbitraryIndex } from "./classParser";
 import type { ClassLocation, FileIndexEntry } from "./types";
 
-const DEFAULT_INCLUDE = "**/*.{ts,tsx,js,jsx}";
+const DEFAULT_INCLUDE =
+  "**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs}";
 const DEFAULT_EXCLUDE = "**/{node_modules,.next,dist,build,coverage,.git,out}/**";
 
 const CACHE_KEY = "smartClassLookup.indexCache.v2";
@@ -182,7 +183,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
     const source = Buffer.from(bytes).toString("utf8");
     const filePath = uri.fsPath;
 
-    if (!canPossiblyContainClasses(source)) {
+    if (!canPossiblyContainClasses(source, filePath)) {
       this.fastSkipCount++;
       this.removeFile(filePath);
       return;
