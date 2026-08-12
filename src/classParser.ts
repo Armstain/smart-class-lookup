@@ -1,9 +1,15 @@
 export function cleanToken(token: string): string {
   let cleaned = token.replace(/^(?:cn|clsx|class[nN]ames|twMerge|cx)\(/i, "");
 
-  cleaned = cleaned
-    .replace(/^\[(["'`])/, "$1")
-    .replace(/(["'`])\]$/, "$1");
+  cleaned = cleaned.replace(/^\[(["'`])/, "$1");
+
+  // `"flex"]` is the tail of a pasted array and its `"]` is punctuation to drop; `content-['hi']`
+  // is one Tailwind arbitrary value and the same `']` is part of the class. A token that contains
+  // a `[` without starting with one is the arbitrary-value case.
+  const isArbitraryValue = cleaned.includes("[") && !cleaned.startsWith("[");
+  if (!isArbitraryValue) {
+    cleaned = cleaned.replace(/(["'`])\]$/, "$1");
+  }
 
   cleaned = cleaned
     .replace(/^["'`{(.]*/, "")
