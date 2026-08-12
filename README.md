@@ -8,7 +8,20 @@ when your codebase spreads those classes across `cn()`, `clsx()`,
 A plain text/regex search for the DevTools string will never find any of
 these. Smart Class Search will.
 
-## What's New in v0.3.3
+## What's New in v0.4.0
+
+- **Markup file support**: `.vue`, `.svelte`, `.astro`, `.html`, `.php`/Blade, `.erb`, `.twig`, and
+  `.hbs` files are now indexed, searched, and replaced in. Static `class=""`, Vue `:class` /
+  `v-bind:class`, Alpine `x-bind:class`, Svelte `class={...}` and `class:foo={cond}`, and Astro
+  `class:list={[...]}` are all understood.
+- **Embedded scripts**: `<script>` blocks in `.vue`/`.svelte` and `.astro` frontmatter go through
+  the same Babel path as a `.tsx` file, so `cn()`, ternaries, arrays, and local variables resolve
+  there too — reported at their real line in the host file.
+- **Editor context menu**: right-click a selection → **Smart Class Search** or
+  **Smart Class Search: Replace Class...**. A selection now takes priority over the clipboard when
+  pre-filling the search box.
+
+### What's New in v0.3.3
 
 - **Universal Replace System**: Text and class replacement now covers all JSX attributes (`href`, `src`, `id`), string literals, template literals, imports, JSX text, and non-AST files.
 - **Source-Aware Candidate Filtering**: Replace target matching scans source text alongside indexed CSS classes, fixing empty occurrence lists on text search targets.
@@ -110,6 +123,13 @@ index, so pick whichever fits the moment.
    `w-[120px]` vs `w-[124px]`), and any that are still missing, so you can
    judge at a glance whether it's the right component.
 
+### Editor context menu (search what you highlighted)
+
+Select a class list in any open file, right-click, and pick **Smart Class Search**
+or **Smart Class Search: Replace Class...**. The selection pre-fills the input —
+it takes priority over the clipboard, and `<div class="...">` wrappers are
+stripped the same way as a paste.
+
 Run **"Smart Class Search: Find Duplicate Components"** from the Command
 Palette any time to look for elements in different files that render with an
 identical set of classes.
@@ -165,8 +185,30 @@ The extension statically analyzes your files to extract class names from complex
 - **Tailwind features**: Arbitrary values (`w-[320px]`), variants (`hover:`, `md:`), and important flags (`!mt-4`)
 - **Local variables**: `const styles = cn("p-4", "flex"); <div className={styles}>` and the same for `style={styleObj}` — resolved back to the value assigned in the same file
 
+### Markup files (`.vue`, `.svelte`, `.astro`, `.html`, `.php`, `.erb`, `.twig`, `.hbs`)
+
+Non-JavaScript templates are scanned for class attributes directly, so the same paste-and-jump
+workflow works outside React:
+
+| Syntax                                            | Frameworks              |
+| ------------------------------------------------- | ----------------------- |
+| `class="p-4 flex"` / `class='p-4 flex'`           | HTML, Blade, ERB, Twig  |
+| `:class="{ 'bg-red-500': isError }"`              | Vue                     |
+| `v-bind:class="isOpen ? 'rounded-lg' : ''"`       | Vue                     |
+| `x-bind:class="'shadow-md'"`                      | Alpine                  |
+| `class={isOpen ? "shadow-md" : "shadow-none"}`    | Svelte, Astro           |
+| `class:bg-base-200={dark}`                        | Svelte                  |
+| `class:list={["gap-2", isActive && "items-center"]}` | Astro                |
+
+`<script>` blocks in `.vue`/`.svelte` and `.astro` frontmatter are parsed as real JS/TS, so a
+`const styles = cn("p-4", isBig && "mb-12")` in the script half resolves exactly as it would in a
+`.tsx` file, and its classes are reported at their true line in the `.vue`/`.astro` file.
+
 > [!NOTE]
-> **Limitation:** Variable resolution only follows assignments within the same file. Classes imported from a different file/module and referenced by name (e.g., `import { styles } from "./styles"`) still can't be resolved, since this is static single-file analysis rather than full cross-module data-flow tracking.
+> **Limitations:**
+> - Variable resolution only follows assignments within the same file. Classes imported from a different file/module and referenced by name (e.g., `import { styles } from "./styles"`) still can't be resolved, since this is static single-file analysis rather than full cross-module data-flow tracking.
+> - In markup, only quoted strings inside a dynamic binding are read as classes. An unquoted object key (Vue's `:class="{ active: isOn }"`) and Blade's `@class([...])` helper are not extracted.
+> - Replacing inside a markup file rewrites class attributes and Svelte `class:` directives; a class living inside a `.vue`/`.svelte` `<script>` `cn()` call is handled by the plain-text fallback instead.
 
 ## Indexing & performance
 
@@ -177,8 +219,8 @@ scan on every restart. The cache is invalidated automatically when the
 `include` or `exclude` settings change.
 
 When no cache exists (first run), the extension scans the workspace once
-(default: `**/*.{ts,tsx,js,jsx}`, excluding `node_modules`, `.next`, `dist`,
-`build`, `coverage`, `.git`, `out`) and builds an in-memory index of
+(default: JS/TS plus the markup extensions listed above, excluding
+`node_modules`, `.next`, `dist`, `build`, `coverage`, `.git`, `out`) and builds an in-memory index of
 `class → file → locations`. After that, a `FileSystemWatcher` keeps the
 index current incrementally - only the file that changed gets re-parsed. You
 can force a full rebuild with **"Smart Class Search: Rebuild Index"**.
@@ -187,7 +229,7 @@ can force a full rebuild with **"Smart Class Search: Rebuild Index"**.
 
 | Setting                                  | Default                                                   | Description                                                             |
 | ----------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `smartClassLookup.include`               | `**/*.{ts,tsx,js,jsx}`                                    | Files to index                                                          |
+| `smartClassLookup.include`               | `**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs}` | Files to index                                   |
 | `smartClassLookup.exclude`               | `**/{node_modules,.next,dist,build,coverage,.git,out}/**` | Files/folders to skip                                                   |
 | `smartClassLookup.minScore`              | `0.3`                                                     | Minimum match score (0–1) to show a result                             |
 | `smartClassLookup.maxResults`            | `25`                                                      | Max number of ranked results shown                                     |
@@ -198,9 +240,16 @@ can force a full rebuild with **"Smart Class Search: Rebuild Index"**.
 
 ```bash
 npm install
-npm run test        # compiles + runs the extractor/matcher smoke tests
-npm run watch       # tsc --watch, for use with the Extension Development Host
+npm run test        # tsc to out/ + runs the extractor/matcher smoke tests
+npm run bundle      # esbuild to dist/extension.js — what the extension actually loads
+npm run watch       # the same bundle in watch mode, for the Extension Development Host
+npm run typecheck   # tsc --noEmit
 ```
+
+The extension entry point is the esbuild bundle at `dist/extension.js`, so run
+`npm run bundle` (or `npm run watch`) at least once before pressing `F5`. The
+`out/` tree produced by `npm run compile` exists only so the smoke tests can
+require each module in isolation.
 
 To try it in VS Code: open this folder, press `F5` to launch an Extension
 Development Host with the extension loaded, open any React/Next.js project

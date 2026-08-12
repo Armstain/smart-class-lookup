@@ -1,5 +1,24 @@
 # Change Log
 
+## [0.4.0]
+
+### Added
+- **Markup file support**: `.vue`, `.svelte`, `.astro`, `.html`/`.htm`, `.php` (Blade), `.erb`, `.twig`, and `.hbs` files are now indexed, searched, and replaced in. Understands static `class=""`, Vue `:class` / `v-bind:class`, Alpine `x-bind:class`, Svelte `class={...}` and `class:foo={cond}`, and Astro `class:list={[...]}`.
+- **Embedded script parsing**: `<script>` blocks in `.vue`/`.svelte` and `.astro` frontmatter run through the same Babel path as a `.tsx` file, so `cn()`, `clsx()`, ternaries, arrays, and local variables resolve there too — reported at their true line in the host file.
+- **Editor context menu**: right-click a selection to run **Smart Class Search** or **Smart Class Search: Replace Class...**. An editor selection now takes priority over the clipboard when pre-filling the search input.
+- **Template interpolation awareness**: `{{ $classes }}`, `<?php … ?>`, and `{% … %}` inside a class attribute are skipped, while the literal classes beside them are still indexed — and a replacement never overwrites the interpolation.
+
+### Fixed
+- **Arbitrary values containing quotes**: `content-['hi']` and `before:content-['']` were being truncated to `content-[` by the token cleaner, which mistook the trailing `']` for pasted-array punctuation. Affected JSX as well as markup.
+- **Partial replacements in markup**: markup files no longer go through Babel's JSX error recovery, which silently skipped whatever it could not parse and could leave a replace half-applied. Class attributes are now edited from the same scanner the indexer uses, which also fixes multi-class replace targets (previously only the first target class was replaced).
+
+### Changed
+- Default `smartClassLookup.include` now covers the markup extensions plus `.mjs`/`.cjs`/`.mts`/`.cts`. **This invalidates the cached index, so the first launch after upgrading performs one full rebuild.**
+- Publisher changed to `armstain`; the extension ID is now `armstain.smart-class-lookup`.
+- **Bundled with esbuild.** The entry point moved from `out/extension.js` to a single minified `dist/extension.js`, so `node_modules` is no longer shipped. The package dropped from 317 files / 2.9MB to 9 files / 1.4MB.
+- Added the `license: MIT` field and removed `private: true`, which had been blocking `vsce publish`.
+- Removed a dead reference to `@vscode/codicons` in the sidebar webview — the stylesheet URI was built but never used, and the package was never a dependency.
+
 ## [0.3.3]
 
 ### Fixed & Improved
