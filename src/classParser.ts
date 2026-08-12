@@ -53,15 +53,33 @@ function extractQuotedSegments(raw: string): string | null {
   return matches.map((m) => m[1] ?? m[2] ?? m[3] ?? "").join(" ");
 }
 
+const CLASS_ATTR_VALUE_RE = /\bclass(?:Name)?\s*=\s*\{?\s*["']([^"']*)["']\s*\}?/i;
+const CLASS_ATTR_TEMPLATE_RE = /\bclass(?:Name)?\s*=\s*\{\s*`([^`]*)`\s*\}/i;
+
+// The value of a `class=`/`className=` attribute embedded in a larger paste (e.g. a whole
+// `<div class="...">` copied out of DevTools), or null when there is no such attribute.
+export function attributeValueFromPaste(raw: string): string | null {
+  return raw.match(CLASS_ATTR_VALUE_RE)?.[1] ?? raw.match(CLASS_ATTR_TEMPLATE_RE)?.[1] ?? null;
+}
+
+// A paste that is itself nothing but `class=`/`className=` plus its value, unwrapped down to the
+// bare expression so it can be parsed as one: `className={cn("a")}` -> `cn("a")`.
+export function unwrapClassAttribute(raw: string): string | null {
+  const match = raw.match(/^\s*class(?:Name)?\s*=\s*([\s\S]+?)\s*$/i);
+  if (!match) return null;
+  const value = match[1];
+  return value.startsWith("{") && value.endsWith("}") ? value.slice(1, -1).trim() : value;
+}
+
 export function extractClassesFromPaste(raw: string): string {
   const trimmed = raw.trim();
 
-  const attrMatch = trimmed.match(/\bclass(?:Name)?\s*=\s*\{?\s*["']([^"']*)["']\s*\}?/i);
+  const attrMatch = trimmed.match(CLASS_ATTR_VALUE_RE);
   if (attrMatch) {
     return attrMatch[1];
   }
 
-  const templateMatch = trimmed.match(/\bclass(?:Name)?\s*=\s*\{\s*`([^`]*)`\s*\}/i);
+  const templateMatch = trimmed.match(CLASS_ATTR_TEMPLATE_RE);
   if (templateMatch) {
     return templateMatch[1];
   }

@@ -1,7 +1,8 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import { WorkspaceIndexer } from "./indexer";
-import { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePastedStyleList } from "./classParser";
+import { extractClassesFromPaste, isStyleInput, parsePastedStyleList } from "./classParser";
+import { parseClassQuery } from "./astExtractor";
 import { rankFiles } from "./matcher";
 import { openAndHighlight, clearDecorations } from "./quickPick";
 import type { SearchResult } from "./types";
@@ -53,7 +54,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             return;
           }
           const isStyle = isStyleInput(rawInput);
-          const inputClasses = isStyle ? parsePastedStyleList(rawInput) : parsePastedClassList(rawInput);
+          const inputClasses = isStyle ? parsePastedStyleList(rawInput) : parseClassQuery(rawInput);
           const cfg = vscode.workspace.getConfiguration("smartClassLookup");
           const minScore = cfg.get<number>("minScore", 0.15);
           const maxResults = cfg.get<number>("maxResults", 25);
@@ -100,8 +101,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           if (!target || !this.indexer) return;
 
           const isStyle = isStyleInput(target);
-          const targetClasses = isStyle ? parsePastedStyleList(target) : parsePastedClassList(target);
-          const replacementClasses = isStyle ? parsePastedStyleList(replacement) : parsePastedClassList(replacement);
+          const targetClasses = isStyle ? parsePastedStyleList(target) : parseClassQuery(target);
+          const replacementClasses = isStyle ? parsePastedStyleList(replacement) : parseClassQuery(replacement);
 
           if (targetClasses.length === 0 && !target.trim()) {
             vscode.window.showWarningMessage("Smart Class Search: invalid target.");
@@ -144,8 +145,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           if (!target || !this.indexer || selectedKeys.size === 0) return;
 
           const isStyle = isStyleInput(target);
-          const targetClasses = isStyle ? parsePastedStyleList(target) : parsePastedClassList(target);
-          const replacementClasses = isStyle ? parsePastedStyleList(replacement) : parsePastedClassList(replacement);
+          const targetClasses = isStyle ? parsePastedStyleList(target) : parseClassQuery(target);
+          const replacementClasses = isStyle ? parsePastedStyleList(replacement) : parseClassQuery(replacement);
 
           if (targetClasses.length === 0 && !target.trim()) {
             vscode.window.showWarningMessage("Smart Class Search: invalid target.");

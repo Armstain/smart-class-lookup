@@ -1,7 +1,14 @@
 import { parse } from "@babel/parser";
 import traverse, { type NodePath } from "@babel/traverse";
 import type * as t from "@babel/types";
-import { tokenize, normalizeStyleKey, normalizeStyleValue } from "./classParser";
+import {
+  tokenize,
+  normalizeStyleKey,
+  normalizeStyleValue,
+  parsePastedClassList,
+  attributeValueFromPaste,
+  unwrapClassAttribute,
+} from "./classParser";
 import {
   embeddedScriptBlocks,
   extractClassesFromMarkup,
@@ -51,6 +58,48 @@ export function canPossiblyContainClasses(source: string, filePath?: string): bo
   return false;
 }
 
+// A pasted query is a fragment, not a program, so it is re-wrapped into the smallest valid JSX
+// that gives it meaning and handed to the same extractor the indexer uses. Order matters: the
+// expression forms are tried before the template form, because a `cn(...)` paste is valid inside
+// `className={...}` but would otherwise be read as literal template text and leak `cn(`/`&&`
+// as class names.
+const QUERY_WRAPPERS: Array<(query: string) => string> = [
+  (query) => `<div className={${query}}/>`,
+  (query) => `<div className={cn(${query})}/>`,
+  (query) => `<div className={\`${query}\`}/>`,
+];
+
+/**
+ * Class names in a pasted search query, resolved through the AST rather than by pattern-matching
+ * the text. Because it is the same traversal the indexer runs, every shape the indexer supports
+ * (template literals, ternaries, `&&`, arrays, object keys, `cn()`/`clsx()` nesting) behaves
+ * identically on the query side — including ignoring what is *not* a class, such as an
+ * identifier or the value a ternary condition compares against.
+ */
+export function parseClassQuery(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+
+  // `className={...}` unwraps to its expression; a class attribute inside a larger markup paste
+  // (`<div class="...">`) contributes only its value. Otherwise the paste is the query.
+  const candidate = unwrapClassAttribute(trimmed) ?? attributeValueFromPaste(trimmed) ?? trimmed;
+  // Unbalanced backticks are common when a template literal is selected by eye; they would
+  // otherwise break every wrapper.
+  const query = candidate.replace(/^`+/, "").replace(/`+$/, "");
+
+  for (const wrap of QUERY_WRAPPERS) {
+    const { classes, parseError } = extractClassesFromJs(wrap(query), "<query>", 0, true);
+    if (parseError || classes.length === 0) continue;
+
+    const seen = new Set<string>();
+    for (const { className } of classes) seen.add(className);
+    return [...seen];
+  }
+
+  // Nothing parsed — fall back to text tokenization (CSS selectors, stray punctuation, prose).
+  return parsePastedClassList(raw);
+}
+
 export function extractClassesFromSource(
   source: string,
   filePath: string
@@ -70,14 +119,18 @@ export function extractClassesFromSource(
 function extractClassesFromJs(
   source: string,
   filePath: string,
-  lineOffset: number
+  lineOffset: number,
+  strict = false
 ): ExtractionResult {
   let ast;
   try {
     ast = parse(source, {
       sourceType: "module",
       plugins: BABEL_PLUGINS,
-      errorRecovery: true,
+      // Indexing wants every class it can salvage from a file that may be mid-edit. Query parsing
+      // wants the opposite: a wrapper that doesn't fit must fail outright so the next one is
+      // tried, instead of recovering into a garbage AST that yields junk tokens.
+      errorRecovery: !strict,
     });
   } catch (err) {
     return { classes: [], parseError: err instanceof Error ? err.message : String(err) };

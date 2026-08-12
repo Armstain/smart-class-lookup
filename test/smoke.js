@@ -714,4 +714,87 @@ assert(
   "the AST path is still used for .tsx when a filePath is passed"
 );
 
+// --- Test 20: parseClassQuery — pasted queries resolved through the AST, not by pattern ---
+// The query side used to guess with regexes: any whitespace-bounded `?` marked the paste a "code
+// fragment", after which only quoted text survived. A template-literal body is the counterexample
+// that breaks that rule — its classes are mostly unquoted, so the real ones were all discarded.
+const { parseClassQuery } = require("../out/astExtractor");
+
+const pastedTemplate =
+  'md:pr-5  py-4 pr-10 bg-gray-100 uppercase  font-medium  text-left ' +
+  '${header.id === "sl" ? "pl-3 pr-5" : ""} ' +
+  'cursor-pointer text-text select-none hover:text-black transition-colors`';
+const templateTokens = parseClassQuery(pastedTemplate);
+for (const cls of [
+  "md:pr-5", "py-4", "pr-10", "bg-gray-100", "uppercase", "font-medium", "text-left",
+  "cursor-pointer", "text-text", "select-none", "hover:text-black", "transition-colors",
+]) {
+  assert(templateTokens.includes(cls), `pasted template literal keeps unquoted class "${cls}"`);
+}
+assert(templateTokens.includes("pl-3") && templateTokens.includes("pr-5"), "ternary branch classes are kept");
+// The ternary's *condition* compares against an id, not a class — it must not show up as missing.
+assert(!templateTokens.includes("sl"), `a ternary condition's compared value is not a class (got [${templateTokens.join(" ")}])`);
+assert(templateTokens.length === 14, `exactly 14 real classes parsed (got ${templateTokens.length})`);
+assert(!templateTokens.some((t) => t.includes("`")), `no token keeps a stray backtick (got [${templateTokens.join(" ")}])`);
+
+// Every shape the indexer understands must behave the same as a query, since both run the same
+// traversal. Each case lists the classes required and the tokens that must never leak.
+const QUERY_CASES = [
+  { q: "p-4 flex rounded-lg", want: ["p-4", "flex", "rounded-lg"], deny: [] },
+  { q: "flex", want: ["flex"], deny: [] },
+  { q: "w-[120px] text-[#fff]", want: ["w-[120px]", "text-[#fff]"], deny: [] },
+  { q: "hover:bg-red-500 md:px-6 !mt-4", want: ["hover:bg-red-500", "md:px-6", "!mt-4"], deny: [] },
+  { q: '<div class="p-4 flex rounded-lg">', want: ["p-4", "flex", "rounded-lg"], deny: ["div", "class"] },
+  { q: 'class="p-4 flex"', want: ["p-4", "flex"], deny: ["class"] },
+  { q: 'className="p-4 flex"', want: ["p-4", "flex"], deny: ["className"] },
+  { q: "className={`p-4 flex`}", want: ["p-4", "flex"], deny: [] },
+  { q: 'className={cn("p-4", isOpen && "block")}', want: ["p-4", "block"], deny: ["isOpen", "cn", "&&"] },
+  { q: 'cn("p-4", mobile ? "px-5" : "px-4")', want: ["p-4", "px-5", "px-4"], deny: ["mobile", "cn"] },
+  { q: 'clsx({ "bg-red-500": isError, "text-white": true })', want: ["bg-red-500", "text-white"], deny: ["isError", "clsx", "true"] },
+  { q: '["p-4", isOpen && "rounded-lg"]', want: ["p-4", "rounded-lg"], deny: ["isOpen"] },
+  { q: 'cn(clsx("relative", "z-10"), "mb-12")', want: ["relative", "z-10", "mb-12"], deny: ["cn", "clsx"] },
+  { q: 'p-4 ${isOpen && "rounded-lg"} flex', want: ["p-4", "rounded-lg", "flex"], deny: ["isOpen"] },
+  { q: "p-4 ${styles} flex", want: ["p-4", "flex"], deny: ["styles"] },
+  { q: 'className={`flex ${isOpen ? "shadow-md" : "shadow-none"} p-4`}', want: ["flex", "shadow-md", "shadow-none", "p-4"], deny: ["isOpen"] },
+  { q: 'cn("p-4", `gap-${size}`, isOpen && "block")', want: ["p-4", "block"], deny: ["isOpen", "size"] },
+  { q: '"p-6 border",\n  isActive ? "bg-red-500" : "bg-white",', want: ["p-6", "border", "bg-red-500", "bg-white"], deny: ["isActive"] },
+  { q: ".bg-red-500", want: ["bg-red-500"], deny: [] },
+  // A ternary condition comparing against a string, in every wrapper shape.
+  { q: '${tab === "active" ? "border-b-2" : "border-none"}', want: ["border-b-2", "border-none"], deny: ["active", "tab"] },
+  { q: 'cn(size === "lg" ? "p-6" : "p-2")', want: ["p-6", "p-2"], deny: ["lg", "size"] },
+];
+
+for (const { q, want, deny } of QUERY_CASES) {
+  const got = parseClassQuery(q);
+  const label = JSON.stringify(q);
+  for (const cls of want) {
+    assert(got.includes(cls), `parseClassQuery(${label}) yields "${cls}" (got [${got.join(" ")}])`);
+  }
+  for (const bad of deny) {
+    assert(!got.includes(bad), `parseClassQuery(${label}) does not leak "${bad}" (got [${got.join(" ")}])`);
+  }
+}
+
+// Replacement inputs go through the same parser, so their order must survive — it decides the
+// text written back into the file.
+assert(
+  parseClassQuery("bg-blue-500 p-6").join(" ") === "bg-blue-500 p-6",
+  `parseClassQuery preserves order for replacement text (got ${parseClassQuery("bg-blue-500 p-6").join(" ")})`
+);
+assert(parseClassQuery("").length === 0, "an empty query yields no classes");
+assert(parseClassQuery("   ").length === 0, "a whitespace-only query yields no classes");
+
+// End to end: the failing query must now actually rank the file it came from.
+const thSrc = 'const H = () => (\n  <th className={`md:pr-5 py-4 pr-10 bg-gray-100 uppercase font-medium text-left ${header.id === "sl" ? "pl-3 pr-5" : ""} cursor-pointer text-text select-none hover:text-black transition-colors`} />\n);';
+const thEntry = buildEntryFromSource(thSrc, "/proj/TableHead.tsx");
+const thRanked = rankFiles(parseClassQuery(pastedTemplate), new Map([["/proj/TableHead.tsx", thEntry]]), {
+  rawInput: pastedTemplate,
+});
+assert(thRanked.length === 1, `the pasted template query finds its source file (got ${thRanked.length})`);
+assert(thRanked[0].score === 1.0, `and scores a full match, with nothing missing (got ${thRanked[0].score})`);
+assert(
+  thRanked[0].unmatchedClasses.length === 0,
+  `nothing is reported missing (got [${thRanked[0].unmatchedClasses.join(" ")}])`
+);
+
 console.log("\nDone.");

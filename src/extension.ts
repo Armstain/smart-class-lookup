@@ -1,7 +1,8 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import { WorkspaceIndexer } from "./indexer";
-import { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePastedStyleList } from "./classParser";
+import { extractClassesFromPaste, isStyleInput, parsePastedStyleList } from "./classParser";
+import { parseClassQuery } from "./astExtractor";
 import { rankFiles } from "./matcher";
 import { openAndHighlight, showResultsQuickPick } from "./quickPick";
 import { SidebarProvider } from "./sidebarProvider";
@@ -169,7 +170,7 @@ async function runSearchCommand(): Promise<void> {
   }
 
   const isStyle = isStyleInput(raw);
-  const inputClasses = isStyle ? parsePastedStyleList(raw) : parsePastedClassList(raw);
+  const inputClasses = isStyle ? parsePastedStyleList(raw) : parseClassQuery(raw);
   // A plain-text query with no class tokens is still valid — text search handles it below.
   if (isStyle && inputClasses.length === 0) {
     vscode.window.showWarningMessage(
@@ -231,8 +232,8 @@ async function runReplaceCommand(): Promise<void> {
   }
 
   const isStyle = isStyleInput(rawFind);
-  const targetClasses = isStyle ? parsePastedStyleList(rawFind) : parsePastedClassList(rawFind);
-  const replacementClasses = isStyle ? parsePastedStyleList(rawReplace) : parsePastedClassList(rawReplace);
+  const targetClasses = isStyle ? parsePastedStyleList(rawFind) : parseClassQuery(rawFind);
+  const replacementClasses = isStyle ? parsePastedStyleList(rawReplace) : parseClassQuery(rawReplace);
 
   if (targetClasses.length === 0 && !rawFind.trim()) {
     vscode.window.showWarningMessage("Smart Class Search: invalid target.");
