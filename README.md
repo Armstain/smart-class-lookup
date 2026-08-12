@@ -212,6 +212,12 @@ workflow works outside React:
 
 ## Indexing & performance
 
+The extension activates on `onStartupFinished`, so the index is already built by
+the time you first search — you don't have to open the sidebar to warm it up.
+That event fires *after* VS Code has finished restoring the window, so it never
+delays window open, and indexing runs on the extension host rather than the UI
+thread.
+
 On activation, the extension loads a **persisted index cache** from VS Code's
 workspace storage and compares file modification times. Only files that have
 changed since the last session are re-parsed, so large repos skip the full
