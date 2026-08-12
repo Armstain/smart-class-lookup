@@ -131,19 +131,32 @@ function looksLikeClassInput(text: string): boolean {
 async function runSearchCommand(): Promise<void> {
   if (!indexer) return;
 
+  // An editor selection is an explicit target, so it wins over the clipboard — this is also what
+  // makes the editor context-menu entry ("Smart Class Search") search what you highlighted.
   let prefill = "";
-  try {
-    const clip = await vscode.env.clipboard.readText();
-    if (looksLikeClassInput(clip) || isStyleInput(clip)) {
-      prefill = isStyleInput(clip) ? clip.trim() : extractClassesFromPaste(clip);
+  const editor = vscode.window.activeTextEditor;
+  const selected = editor && !editor.selection.isEmpty
+    ? editor.document.getText(editor.selection).trim()
+    : "";
+
+  if (selected) {
+    prefill = isStyleInput(selected) ? selected : extractClassesFromPaste(selected);
+  } else {
+    try {
+      const clip = await vscode.env.clipboard.readText();
+      if (looksLikeClassInput(clip) || isStyleInput(clip)) {
+        prefill = isStyleInput(clip) ? clip.trim() : extractClassesFromPaste(clip);
+      }
+    } catch {
     }
-  } catch {
   }
 
   const raw = await vscode.window.showInputBox({
     title: "Smart Class Search",
     prompt: prefill
-      ? "Clipboard detected — press Enter to search, or replace with your input"
+      ? selected
+        ? "Selection detected — press Enter to search, or replace with your input"
+        : "Clipboard detected — press Enter to search, or replace with your input"
       : "Paste class list or DevTools style (e.g. style=\"...\")",
     placeHolder: "relative px-5 OR min-height: 100vh; font-size: 13px;",
     value: prefill,
@@ -255,7 +268,7 @@ async function runReplaceCommand(): Promise<void> {
         }
 
         const source = document.getText();
-        const edits = computeReplacements(source, targetClasses, replacementClasses, rawFind, rawReplace);
+        const edits = computeReplacements(source, targetClasses, replacementClasses, rawFind, rawReplace, file);
         if (edits.length > 0) {
           filesCount++;
           totalOccurrences += edits.length;
