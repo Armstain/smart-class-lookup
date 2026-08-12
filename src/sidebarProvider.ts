@@ -309,10 +309,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private getHtmlForWebview(webview: vscode.Webview): string {
-    const codiconsUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, "node_modules", "@vscode", "codicons", "dist", "codicon.css")
-    );
-
     const config = vscode.workspace.getConfiguration("smartClassLookup");
     const enablePreview = config.get<boolean>("enablePreview", true);
     const previewChecked = enablePreview ? "checked" : "";
