@@ -33,6 +33,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
   public readonly onDidUpdate = this.onDidUpdateEmitter.event;
 
   private building: Promise<void> | undefined;
+  private saveTimer: ReturnType<typeof setTimeout> | undefined;
   public fileCount = 0;
   public lastBuildMs = 0;
   private fastSkipCount = 0;
@@ -143,6 +144,19 @@ export class WorkspaceIndexer implements vscode.Disposable {
     }
 
     this.onDidUpdateEmitter.fire();
+  }
+
+  // The cache is rewritten in full every time, so a burst of file events — a formatter sweeping the
+  // repo, a branch switch, a build writing into a watched folder — would otherwise serialize the
+  // entire index once per file. Losing a pending write costs nothing: the mtime check re-parses
+  // those files on the next start.
+  private scheduleCacheSave(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = undefined;
+      const { include, exclude } = this.getConfig();
+      void this.saveCache(include, exclude);
+    }, 2000);
   }
 
   private async saveCache(include: string, exclude: string): Promise<void> {
@@ -279,8 +293,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
     await this.indexFile(uri);
     this.fileCount = this.index.size;
     this.onDidUpdateEmitter.fire();
-    const { include, exclude } = this.getConfig();
-    await this.saveCache(include, exclude);
+    this.scheduleCacheSave();
   }
 
   private isExcluded(filePath: string): boolean {
@@ -294,6 +307,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
   }
 
   public dispose(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
     for (const d of this.disposables) d.dispose();
     this.onDidUpdateEmitter.dispose();
   }

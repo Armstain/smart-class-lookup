@@ -2,7 +2,7 @@
   "name": "smart-class-lookup",
   "displayName": "Smart Class Search",
   "description": "Paste classes copied from DevTools and instantly find the matching component in your workspace. Built for Tailwind — supports cn(), clsx(), classnames(), template literals, arrays, ternaries, and conditional classNames.",
-  "version": "0.4.0",
+  "version": "0.4.3",
   "publisher": "armstain",
   "icon": "resources/logo.png",
   "repository": {
@@ -30,7 +30,9 @@
     "html",
     "blade"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -129,6 +131,8 @@
     "watch": "npm run bundle -- --watch",
     "compile": "tsc -p ./",
     "typecheck": "tsc --noEmit -p ./",
+    "package": "vsce package",
+    "package:ovsx": "node scripts/package-ovsx.js",
     "test": "npm run compile && node test/smoke.js"
   },
   "devDependencies": {
