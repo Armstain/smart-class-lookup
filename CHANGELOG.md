@@ -1,6 +1,6 @@
 # Change Log
 
-## [0.4.4]
+## [0.4.5]
 
 ### Added
 - **Stylesheet Support**: Added indexing, search, and class extraction for CSS, SCSS, SASS, and LESS stylesheet files (`.css`, `.scss`, `.sass`, `.less`).
