@@ -3,6 +3,7 @@ import traverse, { type NodePath } from "@babel/traverse";
 import type * as t from "@babel/types";
 import {
   tokenize,
+  cleanToken,
   normalizeStyleKey,
   normalizeStyleValue,
   parsePastedClassList,
@@ -17,6 +18,73 @@ import {
 import type { ClassLocation, ExtractedClass, ExtractionResult } from "./types";
 
 export type { ExtractedClass, ExtractionResult } from "./types";
+
+const STYLE_EXTENSIONS = new Set([".css", ".scss", ".sass", ".less"]);
+
+export function isStyleFile(filePath: string): boolean {
+  const dot = filePath.lastIndexOf(".");
+  if (dot === -1) return false;
+  return STYLE_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
+}
+
+// ponytail: Fast regex-based class extractor for stylesheets without bringing in PostCSS/csstree. Ceiling: may match decimals or comments; upgrade path: PostCSS parser if strict CSS AST is ever needed.
+export function extractClassesFromStyle(source: string, filePath: string): ExtractedClass[] {
+  const lineStarts = [0];
+  for (let i = 0; i < source.length; i++) {
+    if (source.charCodeAt(i) === 10) lineStarts.push(i + 1);
+  }
+  const sourceLines = source.split(/\r?\n/);
+  const found: ExtractedClass[] = [];
+
+  const lineAt = (offset: number) => {
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid] <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+
+  const emit = (token: string, offset: number) => {
+    if (!token) return;
+    const line = lineAt(offset);
+    const location: ClassLocation = {
+      file: filePath,
+      line,
+      column: offset - lineStarts[line],
+      context: (sourceLines[line] ?? token).trim().slice(0, 140),
+    };
+    found.push({ className: token, location });
+  };
+
+  // 1. Class selectors: .foo, .gm-style-iw
+  const CLASS_SELECTOR_RE = /\.([a-zA-Z0-9_\-\\:\[\]\/\#\%]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = CLASS_SELECTOR_RE.exec(source)) !== null) {
+    const rawCls = match[1].replace(/\\/g, "");
+    const offset = match.index + 1;
+    emit(rawCls, offset);
+  }
+
+  // 2. Tailwind @apply rules: @apply p-4 flex;
+  const APPLY_RE = /@apply\s+([^;{}]+)/g;
+  while ((match = APPLY_RE.exec(source)) !== null) {
+    const applyBody = match[1];
+    const applyStart = match.index + match[0].indexOf(applyBody);
+    const tokens = applyBody.split(/\s+/).filter(Boolean);
+    let cursor = 0;
+    for (const token of tokens) {
+      const tokenIdx = applyBody.indexOf(token, cursor);
+      const tokenOffset = applyStart + (tokenIdx !== -1 ? tokenIdx : 0);
+      cursor = tokenIdx !== -1 ? tokenIdx + token.length : cursor;
+      emit(cleanToken(token), tokenOffset);
+    }
+  }
+
+  return found;
+}
 
 const CLASS_HELPER_NAMES = new Set([
   "cn",
@@ -43,11 +111,11 @@ const BABEL_PLUGINS: import("@babel/parser").ParserPlugin[] = [
 // in the file. Deliberately conservative — a false "maybe" just costs an unneeded parse;
 // a false "never" would silently drop real classes, which must never happen.
 export function canPossiblyContainClasses(source: string, filePath?: string): boolean {
-  // Markup files carry classes in a `class`/`class:`/`:class` attribute, none of which the
-  // JS-shaped checks below would see. Kept as its own branch so the `class` substring (which
-  // every TS file with a `class` declaration contains) doesn't defeat the fast skip for JS.
   if (filePath && isMarkupFile(filePath)) {
     return source.includes("class");
+  }
+  if (filePath && isStyleFile(filePath)) {
+    return source.includes(".") || source.includes("@apply");
   }
   if (source.includes("className") || source.includes("style") || source.includes("[")) {
     return true;
@@ -104,6 +172,9 @@ export function extractClassesFromSource(
   source: string,
   filePath: string
 ): ExtractionResult {
+  if (isStyleFile(filePath)) {
+    return { classes: extractClassesFromStyle(source, filePath) };
+  }
   if (isMarkupFile(filePath)) {
     const classes = extractClassesFromMarkup(source, filePath);
     // .vue/.svelte <script> blocks and .astro frontmatter are real JS/TS — run them through the

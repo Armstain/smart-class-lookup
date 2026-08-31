@@ -797,4 +797,33 @@ assert(
   `nothing is reported missing (got [${thRanked[0].unmatchedClasses.join(" ")}])`
 );
 
+// Stylesheet extraction smoke test
+const cssSrc = `
+.btn-primary {
+  color: #fff;
+  @apply px-4 py-2 rounded-lg font-bold;
+}
+.card-header .title {
+  font-size: 1.25rem;
+}
+`;
+const cssEntry = buildEntryFromSource(cssSrc, "/proj/styles.css");
+for (const cls of ["btn-primary", "px-4", "py-2", "rounded-lg", "font-bold", "card-header", "title"]) {
+  assert(cssEntry.classes.has(cls), `styles.css extracted "${cls}" from CSS selector / @apply`);
+}
+
+// Multi-line whitespace-flexible text search
+const multiLineSrc = `
+<div
+  className="relative"
+  data-testid="header-container"
+>
+  <h1>Welcome</h1>
+</div>
+`;
+const multiLineEntry = buildEntryFromSource(multiLineSrc, "/proj/Header.tsx");
+const multiLineRes = searchTextInFile('className="relative"\\s+data-testid="header-container"', multiLineEntry) ||
+  searchTextInFile('className="relative"\n  data-testid="header-container"', multiLineEntry);
+assert(multiLineRes !== null && multiLineRes.score === 1.0, "multi-line whitespace-flexible text search matches across lines");
+
 console.log("\nDone.");

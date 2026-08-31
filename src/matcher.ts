@@ -118,6 +118,30 @@ function queryTerms(query: string): string[] {
 // Searches all raw source text (comments, JSX text, prop names, strings), not just class names.
 // A full contiguous phrase match is the strongest signal; failing that, terms co-occurring on
 // a line are ranked by coverage.
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildLineStarts(source: string): number[] {
+  const starts = [0];
+  for (let i = 0; i < source.length; i++) {
+    if (source.charCodeAt(i) === 10) starts.push(i + 1);
+  }
+  return starts;
+}
+
+function lineAt(lineStarts: number[], offset: number): number {
+  let lo = 0;
+  let hi = lineStarts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (lineStarts[mid] <= offset) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+// ponytail: Regex & sliding-window term coverage fallback. Ceiling: O(lines * window) scan on large files; upgrade path: inverted trigram/ngram index if workspace text search needs scaling to 50k+ files.
 export function searchTextInFile(
   query: string,
   entry: FileIndexEntry,
@@ -128,65 +152,90 @@ export function searchTextInFile(
     return null;
   }
 
-  const lines = source.split(/\r?\n/);
   const rawQuery = query.trim();
-  const queryLower = rawQuery.toLowerCase();
+  if (rawQuery.length < 2) {
+    return null;
+  }
 
-  // Generate phrase variants for identifier search (e.g. "Sign in" -> ["sign in", "signin", "sign_in", "sign-in"])
-  const phraseVariants: string[] = [queryLower];
+  const lines = source.split(/\r?\n/);
+  const lineStarts = buildLineStarts(source);
+  const phraseLocs: ClassLocation[] = [];
+  const seenLineCol = new Set<string>();
+
+  const addLocation = (offset: number) => {
+    const line = lineAt(lineStarts, offset);
+    const col = offset - lineStarts[line];
+    const key = `${line}:${col}`;
+    if (!seenLineCol.has(key)) {
+      seenLineCol.add(key);
+      const lineText = lines[line] ?? "";
+      phraseLocs.push({
+        file: entry.file,
+        line,
+        column: col,
+        context: lineText.trim().slice(0, 140),
+      });
+    }
+  };
+
+  const queryLower = rawQuery.toLowerCase();
+  const sourceLower = source.toLowerCase();
+
+  // 1. Exact substring match across full file source
+  let subIdx = sourceLower.indexOf(queryLower);
+  while (subIdx !== -1) {
+    addLocation(subIdx);
+    subIdx = sourceLower.indexOf(queryLower, subIdx + 1);
+  }
+
+  // 2. Multi-line / whitespace-flexible phrase matching (handles newlines, tabs, indentation)
+  const rawWords = rawQuery.split(/\s+/).filter(Boolean);
+  if (rawWords.length > 1) {
+    const whitespacePattern = rawWords.map(escapeRegExp).join("\\s+");
+    try {
+      const re = new RegExp(whitespacePattern, "gi");
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(source)) !== null) {
+        addLocation(m.index);
+        if (m.index === re.lastIndex) re.lastIndex++;
+      }
+    } catch {
+      // ignore regex syntax issues
+    }
+  }
+
+  // 3. Identifier variants (e.g. "Sign in" -> "signin", "sign_in", "sign-in")
   const queryWords = queryLower.split(/[\s_-]+/).filter(Boolean);
   if (queryWords.length > 1) {
-    phraseVariants.push(queryWords.join(""));
-    phraseVariants.push(queryWords.join("_"));
-    phraseVariants.push(queryWords.join("-"));
-  }
-
-  // 1. Phrase match — exact substring or identifier variant match.
-  if (queryLower.length >= 2) {
-    const phraseLocs: ClassLocation[] = [];
-    const seenLineCol = new Set<string>();
-
-    for (let i = 0; i < lines.length; i++) {
-      const lineText = lines[i];
-      const lineLower = lineText.toLowerCase();
-
-      for (const variant of phraseVariants) {
-        let index = lineLower.indexOf(variant);
-        while (index !== -1) {
-          const key = `${i}:${index}`;
-          if (!seenLineCol.has(key)) {
-            seenLineCol.add(key);
-            phraseLocs.push({
-              file: entry.file,
-              line: i,
-              column: index,
-              context: lineText.trim().slice(0, 140),
-            });
-          }
-          index = lineLower.indexOf(variant, index + 1);
-        }
+    const variants = [queryWords.join(""), queryWords.join("_"), queryWords.join("-")];
+    for (const v of variants) {
+      if (v.length < 2 || v === queryLower) continue;
+      let vIdx = sourceLower.indexOf(v);
+      while (vIdx !== -1) {
+        addLocation(vIdx);
+        vIdx = sourceLower.indexOf(v, vIdx + 1);
       }
     }
-
-    if (phraseLocs.length > 0) {
-      return {
-        file: entry.file,
-        matchedCount: phraseLocs.length,
-        totalInputCount: 1,
-        score: 1.0,
-        matchedClasses: [query],
-        unmatchedClasses: [],
-        nearMatches: [],
-        locations: phraseLocs.slice(0, MAX_LOCATIONS_PER_RESULT),
-        maxLineMatches: 1,
-        matchType: "text",
-        textScore: 1.0,
-        textPhrase: true,
-      };
-    }
   }
 
-  // 2. Term-coverage fallback with word-boundary checking for short stop-words.
+  if (phraseLocs.length > 0) {
+    return {
+      file: entry.file,
+      matchedCount: phraseLocs.length,
+      totalInputCount: 1,
+      score: 1.0,
+      matchedClasses: [query],
+      unmatchedClasses: [],
+      nearMatches: [],
+      locations: phraseLocs.slice(0, MAX_LOCATIONS_PER_RESULT),
+      maxLineMatches: 1,
+      matchType: "text",
+      textScore: 1.0,
+      textPhrase: true,
+    };
+  }
+
+  // 4. Term-coverage fallback
   if (options.allowTermFallback === false) {
     return null;
   }
@@ -200,26 +249,44 @@ export function searchTextInFile(
   const significantTerms = terms.filter((t) => !STOP_WORDS.has(t));
   const minRequiredTerms = significantTerms.length > 0 ? significantTerms.length : terms.length;
 
+  const stopRegexes = new Map<string, RegExp>();
+  for (const term of terms) {
+    if (STOP_WORDS.has(term)) {
+      stopRegexes.set(term, new RegExp(`\\b${escapeRegExp(term)}\\b`, "i"));
+    }
+  }
+
   let bestTermCount = 0;
   const perLine: { line: number; count: number }[] = [];
   for (let i = 0; i < lines.length; i++) {
     const lineLower = lines[i].toLowerCase();
     let count = 0;
     for (const term of terms) {
-      const isStop = STOP_WORDS.has(term);
-      const isMatch = isStop
-        ? new RegExp(`\\b${term}\\b`, "i").test(lineLower)
-        : lineLower.includes(term);
-
-      if (isMatch) {
-        count++;
-      }
+      const stopRe = stopRegexes.get(term);
+      const isMatch = stopRe ? stopRe.test(lineLower) : lineLower.includes(term);
+      if (isMatch) count++;
     }
 
     if (count >= minRequiredTerms) {
       perLine.push({ line: i, count });
-      if (count > bestTermCount) {
-        bestTermCount = count;
+      if (count > bestTermCount) bestTermCount = count;
+    }
+  }
+
+  // If per-line didn't match, check sliding window of lines for multi-line spread
+  if (bestTermCount === 0 && lines.length > 0) {
+    const WINDOW_SIZE = Math.min(10, Math.max(5, rawWords.length + 2));
+    for (let i = 0; i < lines.length; i++) {
+      const windowText = lines.slice(i, i + WINDOW_SIZE).join(" ").toLowerCase();
+      let count = 0;
+      for (const term of terms) {
+        const stopRe = stopRegexes.get(term);
+        const isMatch = stopRe ? stopRe.test(windowText) : windowText.includes(term);
+        if (isMatch) count++;
+      }
+      if (count >= minRequiredTerms) {
+        perLine.push({ line: i, count });
+        if (count > bestTermCount) bestTermCount = count;
       }
     }
   }
@@ -232,7 +299,7 @@ export function searchTextInFile(
     .filter((p) => p.count === bestTermCount)
     .slice(0, MAX_LOCATIONS_PER_RESULT)
     .map((p) => {
-      const lineText = lines[p.line];
+      const lineText = lines[p.line] ?? "";
       const lineLower = lineText.toLowerCase();
       let column = 0;
       for (const term of terms) {

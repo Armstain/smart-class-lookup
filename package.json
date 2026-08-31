@@ -2,7 +2,7 @@
   "name": "smart-class-lookup",
   "displayName": "Smart Class Search",
   "description": "Paste classes copied from DevTools and instantly find the matching component in your workspace. Built for Tailwind — supports cn(), clsx(), classnames(), template literals, arrays, ternaries, and conditional classNames.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "publisher": "armstain",
   "icon": "resources/logo.png",
   "repository": {
@@ -94,7 +94,7 @@
       "properties": {
         "smartClassLookup.include": {
           "type": "string",
-          "default": "**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs}",
+          "default": "**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs,css,scss,sass,less}",
           "description": "Glob pattern (relative to each workspace folder) for files to index."
         },
         "smartClassLookup.exclude": {

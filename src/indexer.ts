@@ -5,7 +5,7 @@ import { buildArbitraryIndex } from "./classParser";
 import type { ClassLocation, FileIndexEntry } from "./types";
 
 const DEFAULT_INCLUDE =
-  "**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs}";
+  "**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs,css,scss,sass,less}";
 const DEFAULT_EXCLUDE = "**/{node_modules,.next,dist,build,coverage,.git,out}/**";
 
 const CACHE_KEY = "smartClassLookup.indexCache.v2";
@@ -200,6 +200,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
     if (!canPossiblyContainClasses(source, filePath)) {
       this.fastSkipCount++;
       this.removeFile(filePath);
+      this.addEntryToIndex(filePath, { file: filePath, classes: new Set(), locations: new Map(), mtimeMs: Date.now(), source });
       return;
     }
 
@@ -207,11 +208,6 @@ export class WorkspaceIndexer implements vscode.Disposable {
 
     if (parseError) {
       this.output.appendLine(`[index] skipped ${filePath}: ${parseError}`);
-      this.removeFile(filePath);
-      return;
-    }
-
-    if (classes.length === 0) {
       this.removeFile(filePath);
       return;
     }

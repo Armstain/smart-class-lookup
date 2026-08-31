@@ -1,5 +1,17 @@
 # Change Log
 
+## [0.4.4]
+
+### Added
+- **Stylesheet Support**: Added indexing, search, and class extraction for CSS, SCSS, SASS, and LESS stylesheet files (`.css`, `.scss`, `.sass`, `.less`).
+- **Tailwind `@apply` & CSS Class Selector Extraction**: Extracted CSS selectors (`.btn-primary`, `.card`) and Tailwind utility tokens from `@apply` rules in stylesheets.
+- **Multi-line & Whitespace-Flexible Phrase Search**: Enhanced text search to match phrases spanning multiple lines, indentation, and varied whitespace.
+- **Sliding-Window Multi-line Term Matching**: Added multi-line sliding window term coverage for search queries spread across consecutive code lines.
+
+### Improved
+- **Workspace-Wide Text Search**: Included non-class files in workspace index so text search can reach all included workspace files without requiring class definitions.
+- **Stop-Word Term Matching**: Optimized regex boundaries for short stop-words with pre-compiled pattern caching.
+
 ## [0.4.0]
 
 ### Added
