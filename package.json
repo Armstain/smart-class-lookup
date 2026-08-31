@@ -3,7 +3,7 @@
   "displayName": "Smart Class Search",
   "description": "Paste classes copied from DevTools and instantly find the matching component in your workspace. Built for Tailwind — supports cn(), clsx(), classnames(), template literals, arrays, ternaries, and conditional classNames.",
   "version": "0.4.6",
-  "publisher": "nazmul-hossain-adnan",
+  "publisher": "armstain",
   "icon": "resources/logo.png",
   "repository": {
     "type": "git",
@@ -132,6 +132,7 @@
     "compile": "tsc -p ./",
     "typecheck": "tsc --noEmit -p ./",
     "package": "vsce package",
+    "publish:vscode": "vsce publish",
     "publish:ovsx": "npx ovsx publish",
     "test": "npm run compile && node test/smoke.js"
   },
