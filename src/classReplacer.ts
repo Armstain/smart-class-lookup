@@ -31,7 +31,6 @@ export function replaceClassesInString(
     return { newValue: value, changed: false };
   }
 
-  // Split by whitespace while preserving delimiters
   const parts = value.split(/(\s+)/);
   const targetSet = new Set(targetClasses.map((t) => t.toLowerCase()));
   let firstMatchIndex = -1;
@@ -68,7 +67,6 @@ export function replaceClassesInString(
     return { newValue, changed: true };
   }
 
-  // Fallback: raw target string replacement inside string value
   if (rawTarget && rawTarget.trim() && value.includes(rawTarget)) {
     const newValue = value.split(rawTarget).join(rawReplacement ?? "");
     return { newValue, changed: true };
@@ -213,19 +211,26 @@ export function computeReplacements(
     });
   }
 
-  // Fallback if AST failed or produced no edits but rawTarget / targetClasses exist in source
+  // Word-boundary checked so e.g. target "card" doesn't match inside "cardTitle".
   if (edits.length === 0 && (rawTarget?.trim() || targetClasses.length > 0)) {
     const findTerm = rawTarget?.trim() || targetClasses[0];
     if (findTerm && source.includes(findTerm)) {
       const replaceTerm = rawReplacement ?? replacementClasses.join(" ");
+      const isWordChar = (ch: string | undefined) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch);
       let pos = source.indexOf(findTerm);
       while (pos !== -1) {
-        edits.push({
-          start: pos,
-          end: pos + findTerm.length,
-          newText: replaceTerm,
-        });
-        pos = source.indexOf(findTerm, pos + findTerm.length);
+        const before = source[pos - 1];
+        const after = source[pos + findTerm.length];
+        if (!isWordChar(before) && !isWordChar(after)) {
+          edits.push({
+            start: pos,
+            end: pos + findTerm.length,
+            newText: replaceTerm,
+          });
+          pos = source.indexOf(findTerm, pos + findTerm.length);
+        } else {
+          pos = source.indexOf(findTerm, pos + 1);
+        }
       }
     }
   }

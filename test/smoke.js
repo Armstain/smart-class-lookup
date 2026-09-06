@@ -335,6 +335,16 @@ const editsF = computeReplacements(srcReplaceF, ["/trip-planner"], ["/planner"],
 const resultF = applyEdits(srcReplaceF, editsF);
 assert(resultF === `<Link href="/planner">Trip Planner</Link>`, "replacement inside href attribute works");
 
+// Case G: the raw-text fallback (AST produced no edits) must respect word boundaries —
+// "card" must not match inside "cardWrapper".
+const srcReplaceG = `const cardWrapper = 1;\nconst card = 2;`;
+const editsG = computeReplacements(srcReplaceG, ["card"], ["box"], "card", "box");
+const resultG = applyEdits(srcReplaceG, editsG);
+assert(
+  resultG === `const cardWrapper = 1;\nconst box = 2;`,
+  `raw-text fallback only replaces whole-word matches (got ${resultG})`
+);
+
 // --- Test 13b: Replace preview (collectReplacements / applySelectedEdits) ---
 const { collectReplacements, applySelectedEdits, filterCandidateFiles } = require("../out/replacePreview");
 
