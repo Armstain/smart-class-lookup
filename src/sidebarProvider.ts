@@ -375,6 +375,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     .replace-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
       background: var(--vscode-button-background, #007acc);
       color: var(--vscode-button-foreground, #ffffff);
       border: none;
@@ -384,6 +387,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       font-size: 11px;
       font-weight: 500;
       white-space: nowrap;
+    }
+
+    .replace-btn svg {
+      width: 12px;
+      height: 12px;
+      fill: currentColor;
+      flex-shrink: 0;
     }
 
     .replace-btn:hover {
@@ -816,7 +826,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </div>
     <div class="input-wrapper replace-wrapper">
       <input type="text" id="replace-input" placeholder="Replace with..." autocomplete="off">
-      <button class="replace-btn" id="replace-btn" title="Preview occurrences before replacing">Replace…</button>
+      <button class="replace-btn" id="replace-btn" title="Preview occurrences before replacing"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99zM21 9l-3.99-4v3H10v2h7.01v3z"/></svg>Replace…</button>
     </div>
     <div class="toggle-container">
       <label class="toggle-label">
