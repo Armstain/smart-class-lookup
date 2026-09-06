@@ -945,6 +945,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         case 'viewVisible':
           currentFileCount = message.fileCount;
           statusText.textContent = \`Index contains \${currentFileCount} files\`;
+          if (message.type === 'indexUpdated' && searchInput.value.trim()) {
+            vscode.postMessage({ type: 'search', value: searchInput.value });
+          }
           break;
         case 'previewConfigChanged':
           hoverPreviewToggle.checked = message.enabled;
