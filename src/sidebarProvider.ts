@@ -364,19 +364,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     .replace-wrapper {
-      display: flex;
-      align-items: center;
-      gap: 2px;
       margin-top: 4px;
     }
 
-    .replace-wrapper input[type="text"] {
-      flex-grow: 1;
-      padding-right: 8px;
-    }
-
     .replace-btn {
-      flex-shrink: 0;
+      position: absolute;
+      top: 50%;
+      right: 6px;
+      transform: translateY(-50%);
       display: inline-flex;
       align-items: center;
       justify-content: center;
