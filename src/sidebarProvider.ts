@@ -365,7 +365,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     .replace-wrapper {
       display: flex;
-      gap: 4px;
+      align-items: center;
+      gap: 2px;
       margin-top: 4px;
     }
 
@@ -375,29 +376,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     .replace-btn {
+      flex-shrink: 0;
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      background: var(--vscode-button-background, #007acc);
-      color: var(--vscode-button-foreground, #ffffff);
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      background: none;
+      color: var(--vscode-icon-foreground, #cccccc);
       border: none;
-      padding: 6px 12px;
-      border-radius: 2px;
+      padding: 0;
+      border-radius: 3px;
       cursor: pointer;
-      font-size: 11px;
-      font-weight: 500;
-      white-space: nowrap;
     }
 
     .replace-btn svg {
-      width: 12px;
-      height: 12px;
+      width: 14px;
+      height: 14px;
       fill: currentColor;
       flex-shrink: 0;
     }
 
     .replace-btn:hover {
-      background: var(--vscode-button-hoverBackground, #0062a3);
+      background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
     }
 
     .clear-btn {
@@ -826,7 +827,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </div>
     <div class="input-wrapper replace-wrapper">
       <input type="text" id="replace-input" placeholder="Replace with..." autocomplete="off">
-      <button class="replace-btn" id="replace-btn" title="Preview occurrences before replacing"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99zM21 9l-3.99-4v3H10v2h7.01v3z"/></svg>Replace…</button>
+      <button class="replace-btn" id="replace-btn" title="Preview occurrences before replacing"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99zM21 9l-3.99-4v3H10v2h7.01v3z"/></svg></button>
     </div>
     <div class="toggle-container">
       <label class="toggle-label">
