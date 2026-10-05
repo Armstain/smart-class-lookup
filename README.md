@@ -215,8 +215,9 @@ workflow works outside React:
 The extension activates on `onStartupFinished`, so the index is already built by
 the time you first search — you don't have to open the sidebar to warm it up.
 That event fires *after* VS Code has finished restoring the window, so it never
-delays window open, and indexing runs on the extension host rather than the UI
-thread.
+delays window open. Parsing runs in background worker threads (up to half your
+CPU cores, max 4), so a full build never blocks the extension host or other
+extensions.
 
 On activation, the extension loads a **persisted index cache** from VS Code's
 workspace storage and compares file modification times. Only files that have
