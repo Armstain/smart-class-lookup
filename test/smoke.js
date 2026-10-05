@@ -836,4 +836,17 @@ const multiLineRes = searchTextInFile('className="relative"\\s+data-testid="head
   searchTextInFile('className="relative"\n  data-testid="header-container"', multiLineEntry);
 assert(multiLineRes !== null && multiLineRes.score === 1.0, "multi-line whitespace-flexible text search matches across lines");
 
+// A duplicate import made Babel's scope tracking throw, which aborted the whole index build.
+const dupImportSrc = 'import { useT } from "x";\nimport { useT } from "x";\nexport default () => <div className="flex gap-4" />;';
+let dupImport;
+try {
+  dupImport = extractClassesFromSource(dupImportSrc, "/proj/Dup.jsx");
+} catch (err) {
+  dupImport = { classes: [], parseError: "threw: " + err.message };
+}
+assert(
+  dupImport.classes.some((c) => c.className === "gap-4"),
+  `duplicate import still yields classes (got ${dupImport.parseError ?? dupImport.classes.length})`
+);
+
 console.log("\nDone.");

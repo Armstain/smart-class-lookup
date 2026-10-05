@@ -172,6 +172,7 @@ export function computeReplacements(
 
   if (ast) {
     traverse(ast, {
+      noScope: true,
       StringLiteral(path: NodePath<t.StringLiteral>) {
         if (typeof path.node.start === "number" && typeof path.node.end === "number") {
           handleStringValue(path.node.value, path.node.start, path.node.end, false);

@@ -212,6 +212,7 @@ function extractClassesFromJs(
 
   const varInitializers = new Map<string, t.Node>();
   traverse(ast, {
+    noScope: true,
     VariableDeclarator(path: NodePath<t.VariableDeclarator>) {
       const id = path.node.id;
       if (id.type === "Identifier" && path.node.init) {
@@ -390,6 +391,7 @@ function extractClassesFromJs(
   }
 
   traverse(ast, {
+    noScope: true,
     JSXAttribute(path: NodePath<t.JSXAttribute>) {
       const name = path.node.name;
       if (name.type !== "JSXIdentifier") {
@@ -429,3 +431,4 @@ function extractClassesFromJs(
 
   return { classes: found };
 }
+
