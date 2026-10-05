@@ -35,7 +35,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   void indexer.buildFullIndex().then(() => indexer?.startWatching());
-  updateStatusBar(true);
+  updateStatusBar();
   statusBarItem.show();
 
   context.subscriptions.push(
@@ -113,9 +113,9 @@ async function runFindDuplicatesCommand(): Promise<void> {
   await openAndHighlight(syntheticResult, 0, false);
 }
 
-function updateStatusBar(building = false): void {
+function updateStatusBar(): void {
   if (!statusBarItem || !indexer) return;
-  statusBarItem.text = building
+  statusBarItem.text = indexer.isBuilding
     ? "$(sync~spin) Smart Class Search: indexing…"
     : `$(search) Smart Class Search (${indexer.fileCount} files)`;
   statusBarItem.tooltip = "Click to run Smart Class Search";

@@ -18,7 +18,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   ) {
     this.indexer.onDidUpdate(() => {
       if (this.view) {
-        this.view.webview.postMessage({ type: "indexUpdated", fileCount: this.indexer.fileCount });
+        this.view.webview.postMessage({ type: "indexUpdated", fileCount: this.indexer.fileCount, building: this.indexer.isBuilding });
       }
     });
 
@@ -290,7 +290,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
-        webviewView.webview.postMessage({ type: "viewVisible", fileCount: this.indexer.fileCount });
+        webviewView.webview.postMessage({ type: "viewVisible", fileCount: this.indexer.fileCount, building: this.indexer.isBuilding });
       }
     });
   }
@@ -864,6 +864,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const replaceApplyBtn = document.getElementById('replace-apply-btn');
 
     let currentFileCount = 0;
+    let indexing = false;
     let selectedReplaceKeys = new Set();
     let currentReplaceTarget = '';
     let currentReplaceReplacement = '';
@@ -950,7 +951,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         case 'indexUpdated':
         case 'viewVisible':
           currentFileCount = message.fileCount;
-          statusText.textContent = \`Index contains \${currentFileCount} files\`;
+          indexing = !!message.building;
+          statusText.textContent = indexing ? 'Indexing files…' : \`Index contains \${currentFileCount} files\`;
           if (message.type === 'indexUpdated' && searchInput.value.trim()) {
             vscode.postMessage({ type: 'search', value: searchInput.value });
           }
@@ -1047,7 +1049,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       resultsContainer.innerHTML = '';
       if (results.length === 0) {
         if (searchInput.value.trim()) {
-          resultsContainer.innerHTML = '<div class="no-results">No components match these classes</div>';
+          resultsContainer.innerHTML = indexing
+            ? '<div class="no-results">Still indexing, results may be incomplete</div>'
+            : '<div class="no-results">No components match these classes</div>';
         } else {
           resultsContainer.innerHTML = '<div class="no-results">Type or paste classes to search</div>';
         }

@@ -850,4 +850,19 @@ assert(
   `duplicate import still yields classes (got ${dupImport.parseError ?? dupImport.classes.length})`
 );
 
+// Watcher exclude filtering must honour the same globs findFiles() does, braces or not.
+const { globToRegExp } = require("../out/glob");
+const defaultExclude = globToRegExp("**/{node_modules,.next,dist,build,coverage,.git,out}/**");
+assert(defaultExclude.test("node_modules/react/index.js"), "default exclude matches root node_modules");
+assert(defaultExclude.test("apps/web/.next/server/page.js"), "default exclude matches nested .next");
+assert(!defaultExclude.test("src/components/dist.tsx"), "default exclude ignores a file merely named like an excluded dir");
+assert(!defaultExclude.test("src/xnext/page.tsx"), "dot in .next is literal");
+assert(globToRegExp("**/node_modules/**").test("packages/a/node_modules/b.js"), "brace-less exclude works");
+assert(globToRegExp("**/*.min.*").test("public/js/app.min.js"), "extension glob matches minified file");
+assert(!globToRegExp("**/*.min.*").test("public/js/app.js"), "extension glob skips normal file");
+assert(
+  globToRegExp("**/[!_]*.tsx").test("src/Page.tsx") && !globToRegExp("**/[!_]*.tsx").test("src/_app.tsx"),
+  "negated character class"
+);
+
 console.log("\nDone.");
