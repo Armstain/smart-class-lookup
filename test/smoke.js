@@ -213,6 +213,7 @@ assert(ranked[0].locations.length === 2, `locations merged (got ${ranked[0].loca
 // --- Test 9: Proper Inline Style Matching (with px stripping and quotes normalization) ---
 const cssPaste = "min-height: 100vh; font-size: 13px; padding-top: 25px;";
 assert(isStyleInput(cssPaste), "detects inline CSS as style input");
+assert(!isStyleInput("flex shrink-0 items-center gap-3 md:gap-4"), "class list with a variant is not style input");
 
 const styleTokens = parsePastedStyleList(cssPaste);
 assert(styleTokens.length === 3, `should parse into 3 style tokens (got ${styleTokens.length})`);

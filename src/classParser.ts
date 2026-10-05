@@ -160,7 +160,9 @@ export function isStyleInput(raw: string): boolean {
   if (!hasColon) return false;
   if (trimmed.includes(";") || trimmed.includes(",")) return true;
 
+  // A space before the first colon means it came from a variant (`flex md:gap-4`), not `prop: val`.
   const key = trimmed.split(":")[0].trim();
+  if (/\s/.test(key)) return false;
   return /^(width|height|min-width|min-height|max-width|max-height|font-size|font-weight|padding|margin|color|background|display|flex|position|top|bottom|left|right|border|opacity|z-index|line-height|text-align|align-items|justify-content)/i.test(key);
 }
 
