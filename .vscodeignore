@@ -4,6 +4,7 @@
 .vscode/**
 .github/**
 .claude/**
+.kilo/**
 .gitignore
 # Duplicate of resources/logo.png (1.2MB); the manifest icon points at the resources/ copy.
 logo.png
