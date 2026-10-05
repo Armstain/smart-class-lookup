@@ -865,4 +865,19 @@ assert(
   "negated character class"
 );
 
-console.log("\nDone.");
+// Off-thread parsing must yield exactly what inline parsing does, and a fast-skip file stays cheap.
+const { parseSource } = require("../out/astExtractor");
+const { ParsePool } = require("../out/parsePool");
+(async () => {
+  const pool = new ParsePool();
+  const src = 'export const A = () => <div className={cn("flex p-4", on && "gap-2")} />;';
+  const [viaPool, plain] = await Promise.all([pool.parse(src, "/proj/A.tsx"), pool.parse("export const x = 1;", "/proj/x.ts")]);
+  pool.dispose();
+  const inline = parseSource(src, "/proj/A.tsx");
+  assert(
+    [...viaPool.classes].sort().join() === [...inline.classes].sort().join() && viaPool.locations.get("gap-2")?.length === 1,
+    `worker parse matches inline parse (got ${[...viaPool.classes].join(" ")})`
+  );
+  assert(plain.fastSkip && plain.classes.size === 0, "worker fast-skips files with no possible classes");
+  console.log("\nDone.");
+})();

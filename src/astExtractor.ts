@@ -432,3 +432,39 @@ function extractClassesFromJs(
   return { classes: found };
 }
 
+export interface ParsedFile {
+  classes: Set<string>;
+  locations: Map<string, ClassLocation[]>;
+  fastSkip: boolean;
+  parseError?: string;
+}
+
+// Plain data in and out (Map/Set survive structured clone), so it runs the same inline or in a
+// worker thread.
+export function parseSource(source: string, filePath: string): ParsedFile {
+  const classes = new Set<string>();
+  const locations = new Map<string, ClassLocation[]>();
+  if (!canPossiblyContainClasses(source, filePath)) {
+    return { classes, locations, fastSkip: true };
+  }
+
+  // Babel can throw past its own error recovery (e.g. `Duplicate declaration` from scope
+  // tracking), and one uncaught throw here used to abort the whole build.
+  let result: ExtractionResult;
+  try {
+    result = extractClassesFromSource(source, filePath);
+  } catch (err) {
+    result = { classes: [], parseError: err instanceof Error ? err.message : String(err) };
+  }
+
+  for (const { className, location } of result.classes) {
+    classes.add(className);
+    const list = locations.get(className);
+    if (list) {
+      if (list.length < 8) list.push(location); // cap per-class locations
+    } else {
+      locations.set(className, [location]);
+    }
+  }
+  return { classes, locations, fastSkip: false, parseError: result.parseError };
+}

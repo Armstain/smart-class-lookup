@@ -127,7 +127,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run typecheck && npm run bundle",
-    "bundle": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify --sourcemap",
+    "bundle": "esbuild ./src/extension.ts ./src/parsePool.ts --bundle --outdir=dist --external:vscode --format=cjs --platform=node --minify --sourcemap",
     "watch": "npm run bundle -- --watch",
     "compile": "tsc -p ./",
     "typecheck": "tsc --noEmit -p ./",

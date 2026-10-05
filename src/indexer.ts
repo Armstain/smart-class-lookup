@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
-import { canPossiblyContainClasses, extractClassesFromSource } from "./astExtractor";
+import { parseSource } from "./astExtractor";
 import { buildArbitraryIndex } from "./classParser";
 import { globToRegExp } from "./glob";
-import type { ClassLocation, ExtractionResult, FileIndexEntry } from "./types";
+import { ParsePool } from "./parsePool";
+import type { ClassLocation, FileIndexEntry } from "./types";
 
 const DEFAULT_INCLUDE =
   "**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs,css,scss,sass,less}";
@@ -11,8 +12,8 @@ const DEFAULT_EXCLUDE = "**/{node_modules,.next,dist,build,coverage,.git,out}/**
 const CACHE_FILE = "index-cache-v2.json";
 const LEGACY_CACHE_KEY = "smartClassLookup.indexCache.v2";
 
-// Parsing is synchronous and blocks the extension host, so a stray bundle or minified vendor file
-// can freeze indexing for minutes. Hand-written components never get near this size.
+// Parsing is synchronous, so a stray bundle or minified vendor file can stall a parse worker (or
+// the extension host, for watcher events) for minutes. Hand-written components never get near this size.
 const MAX_FILE_BYTES = 1024 * 1024;
 const MINIFIED_RE = /\.min\.[^\\/]+$/i;
 
@@ -112,6 +113,9 @@ export class WorkspaceIndexer implements vscode.Disposable {
     const uris = await vscode.workspace.findFiles(include, exclude);
     this.output.appendLine(`[index] scanning ${uris.length} files (incremental: ${cacheValid ? "yes" : "no"})...`);
 
+    // Workers live only for the build: each holds its own copy of Babel, and watcher events are
+    // one file at a time, cheap enough to parse inline.
+    const pool = new ParsePool();
     const CONCURRENCY = 16;
     let cursor = 0;
     // Skip the save below when a fully-cached reload changes nothing.
@@ -122,8 +126,8 @@ export class WorkspaceIndexer implements vscode.Disposable {
         const uri = uris[cursor++];
         const filePath = uri.fsPath;
 
+        let stat: vscode.FileStat | undefined;
         if (cacheValid) {
-          let stat: vscode.FileStat;
           try {
             stat = await vscode.workspace.fs.stat(uri);
           } catch {
@@ -137,12 +141,16 @@ export class WorkspaceIndexer implements vscode.Disposable {
           }
         }
 
-        await this.indexFile(uri);
+        await this.indexFile(uri, pool, stat);
         changed = true;
       }
     };
 
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, uris.length || 1) }, worker));
+    try {
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, uris.length || 1) }, worker));
+    } finally {
+      pool.dispose();
+    }
 
     const uriSet = new Set(uris.map((u) => u.fsPath));
     for (const filePath of this.index.keys()) {
@@ -200,7 +208,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
 
   private async saveCache(include: string, exclude: string): Promise<void> {
     const uri = this.cacheUri();
-    if (!uri || !this.context.storageUri) return;
+    if (!this.context.storageUri) return;
     const entries: CachedEntry[] = [];
     for (const entry of this.index.values()) {
       entries.push({
@@ -213,7 +221,7 @@ export class WorkspaceIndexer implements vscode.Disposable {
     const cache: IndexCache = { include, exclude, entries };
     try {
       await vscode.workspace.fs.createDirectory(this.context.storageUri);
-      await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(cache), "utf8"));
+      await vscode.workspace.fs.writeFile(uri!, Buffer.from(JSON.stringify(cache), "utf8"));
     } catch (err) {
       this.output.appendLine(`[index] cache save failed: ${errorMessage(err)}`);
     }
@@ -232,12 +240,12 @@ export class WorkspaceIndexer implements vscode.Disposable {
     }
   }
 
-  private async indexFile(uri: vscode.Uri): Promise<void> {
+  private async indexFile(uri: vscode.Uri, pool?: ParsePool, knownStat?: vscode.FileStat): Promise<void> {
     const filePath = uri.fsPath;
     let stat: vscode.FileStat;
     let bytes: Uint8Array;
     try {
-      stat = await vscode.workspace.fs.stat(uri);
+      stat = knownStat ?? (await vscode.workspace.fs.stat(uri));
       if (stat.size > MAX_FILE_BYTES || MINIFIED_RE.test(filePath)) {
         this.output.appendLine(`[index] skipped ${filePath}: minified or larger than ${MAX_FILE_BYTES / 1024} KB`);
         this.removeFile(filePath);
@@ -250,45 +258,19 @@ export class WorkspaceIndexer implements vscode.Disposable {
     }
 
     const source = Buffer.from(bytes).toString("utf8");
-    const mtimeMs = stat.mtime;
+    const { classes, locations, fastSkip, parseError } = pool
+      ? await pool.parse(source, filePath)
+      : parseSource(source, filePath);
 
-    if (!canPossiblyContainClasses(source, filePath)) {
-      this.fastSkipCount++;
-      this.removeFile(filePath);
-      this.addEntryToIndex(filePath, { file: filePath, classes: new Set(), locations: new Map(), mtimeMs, source });
-      return;
-    }
-
-    // Babel can throw past its own error recovery (e.g. `Duplicate declaration` from scope
-    // tracking), and one uncaught throw here used to abort the whole build.
-    let result: ExtractionResult;
-    try {
-      result = extractClassesFromSource(source, filePath);
-    } catch (err) {
-      result = { classes: [], parseError: errorMessage(err) };
-    }
-
+    if (fastSkip) this.fastSkipCount++;
     // A file that fails to parse stays indexed with no classes, so it's cached (not re-parsed and
     // re-logged every start) and still reachable by plain-text search.
-    if (result.parseError) {
-      this.output.appendLine(`[index] skipped ${filePath}: ${result.parseError}`);
-    }
-
-    const classSet = new Set<string>();
-    const locations = new Map<string, ClassLocation[]>();
-
-    for (const { className, location } of result.classes) {
-      classSet.add(className);
-      const list = locations.get(className);
-      if (list) {
-        if (list.length < 8) list.push(location); // cap per-class locations
-      } else {
-        locations.set(className, [location]);
-      }
+    if (parseError) {
+      this.output.appendLine(`[index] skipped ${filePath}: ${parseError}`);
     }
 
     this.removeFile(filePath);
-    this.addEntryToIndex(filePath, { file: filePath, classes: classSet, locations, mtimeMs, source });
+    this.addEntryToIndex(filePath, { file: filePath, classes, locations, mtimeMs: stat.mtime, source });
   }
 
   private removeFile(filePath: string): void {
