@@ -8,24 +8,18 @@ when your codebase spreads those classes across `cn()`, `clsx()`,
 A plain text/regex search for the DevTools string will never find any of
 these. Smart Class Search will.
 
-## What's New in v0.4.0
+## What's New in v0.4.9
 
-- **Markup file support**: `.vue`, `.svelte`, `.astro`, `.html`, `.php`/Blade, `.erb`, `.twig`, and
-  `.hbs` files are now indexed, searched, and replaced in. Static `class=""`, Vue `:class` /
-  `v-bind:class`, Alpine `x-bind:class`, Svelte `class={...}` and `class:foo={cond}`, and Astro
-  `class:list={[...]}` are all understood.
-- **Embedded scripts**: `<script>` blocks in `.vue`/`.svelte` and `.astro` frontmatter go through
-  the same Babel path as a `.tsx` file, so `cn()`, ternaries, arrays, and local variables resolve
-  there too — reported at their real line in the host file.
-- **Editor context menu**: right-click a selection → **Smart Class Search** or
-  **Smart Class Search: Replace Class...**. A selection now takes priority over the clipboard when
-  pre-filling the search box.
+- **Faster, non-blocking indexing**: files are parsed in background worker threads, so a full
+  build finishes sooner and VS Code (IntelliSense, formatters, Git) stays responsive while it runs.
+- **Sturdier indexing** (v0.4.8): one unparseable file can no longer break the build, huge and
+  minified files are skipped, and the sidebar shows when an index is still building.
+- **Safer replace** (v0.4.7): the plain-text fallback only replaces whole words, so `card` no
+  longer rewrites `cardTitle`.
+- **Stylesheets** (v0.4.5): `.css`, `.scss`, `.sass`, and `.less` class selectors and Tailwind
+  `@apply` rules are indexed and searchable, and text search matches phrases across line breaks.
 
-### What's New in v0.3.3
-
-- **Universal Replace System**: Text and class replacement now covers all JSX attributes (`href`, `src`, `id`), string literals, template literals, imports, JSX text, and non-AST files.
-- **Source-Aware Candidate Filtering**: Replace target matching scans source text alongside indexed CSS classes, fixing empty occurrence lists on text search targets.
-- **Replace Preview Live Editor Previewing**: Hovering or clicking occurrences/file headers in the Replace Preview pane live-previews and navigates directly to those lines in the editor.
+See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ## Examples
 
@@ -139,6 +133,7 @@ identical set of classes.
 Search now automatically runs class matching alongside a full source-text search (comments, JSX text, property names, strings) by default. The ranking engine intelligently adapts based on the query:
 - **Prose-shaped queries** (e.g. comment searches, raw labels, or general text) float literal text matches to the top.
 - **Class-heavy queries** (e.g. Tailwind lists) keep class matches on top and gate out incidental word coincidences (like a class named `border` matching a CSS property name `border:` in a style object) to keep results noise-free.
+- **Multi-line phrases**: A pasted snippet still matches when the source splits it across lines or indents it differently, e.g. `className="relative" data-testid="header"` finds the same attributes written on two lines.
 - **Syntactic Cleaning**: Pasting a raw code fragment (such as `cn()` or `clsx()` calls, ternaries) into the search box parses actual class strings cleanly without leaking bare JavaScript syntax (identifiers, operators like `?`, `:`, `&&`) as class names.
 
 ### Class Replacement (Interactive Preview & Selective Apply)
@@ -146,9 +141,9 @@ Search now automatically runs class matching alongside a full source-text search
 You can replace classes across your workspace using either the sidebar or the Command Palette:
 
 #### Via the Sidebar (Recommended):
-1. Click the **"Replace"** toggle button under the main search input to open the replacement fields.
-2. Enter the class(es) to find in the first input, and the replacement class(es) in the second input (leave empty to delete). Click **"Replace"** to generate a preview.
-3. The sidebar switches to a **Replace Preview** pane, displaying all matching occurrences grouped by file.
+1. Enter the class(es) to find in the search input.
+2. Enter the replacement class(es) in the **"Replace with..."** input below it (leave empty to delete).
+3. Click the swap icon inside the replace input to generate a preview. The sidebar switches to a **Replace Preview** pane, displaying all matching occurrences grouped by file.
 4. Each occurrence shows its line number and a side-by-side diff (`before → after`).
 5. Use the checkboxes to select or deselect specific occurrences or entire files.
 6. Click **"Apply (N)"** to perform the replacements. The extension re-derives edits from the current file source at the exact moment of application; if a file has changed since the preview was generated, those occurrences are safely skipped to avoid source corruption.
@@ -204,6 +199,18 @@ workflow works outside React:
 `const styles = cn("p-4", isBig && "mb-12")` in the script half resolves exactly as it would in a
 `.tsx` file, and its classes are reported at their true line in the `.vue`/`.astro` file.
 
+### Stylesheets (`.css`, `.scss`, `.sass`, `.less`)
+
+Class selectors (`.btn-primary`, `.card`) and the utilities inside Tailwind `@apply` rules
+are indexed, so a class defined or composed in a stylesheet is found alongside the components that
+use it:
+
+```css
+.btn-primary {
+  @apply px-4 py-2 rounded-lg bg-blue-600;
+}
+```
+
 > [!NOTE]
 > **Limitations:**
 > - Variable resolution only follows assignments within the same file. Classes imported from a different file/module and referenced by name (e.g., `import { styles } from "./styles"`) still can't be resolved, since this is static single-file analysis rather than full cross-module data-flow tracking.
@@ -219,24 +226,35 @@ delays window open. Parsing runs in background worker threads (up to half your
 CPU cores, max 4), so a full build never blocks the extension host or other
 extensions.
 
-On activation, the extension loads a **persisted index cache** from VS Code's
-workspace storage and compares file modification times. Only files that have
-changed since the last session are re-parsed, so large repos skip the full
-scan on every restart. The cache is invalidated automatically when the
-`include` or `exclude` settings change.
+On activation, the extension loads a **persisted index cache** (a file in the
+extension's workspace storage) and compares file modification times. Only
+files that have changed since the last session are re-parsed, so large repos
+skip the full scan on every restart. The cache is invalidated automatically
+when the `include` or `exclude` settings change.
 
 When no cache exists (first run), the extension scans the workspace once
-(default: JS/TS plus the markup extensions listed above, excluding
+(default: JS/TS, the markup extensions, and stylesheets listed above, excluding
 `node_modules`, `.next`, `dist`, `build`, `coverage`, `.git`, `out`) and builds an in-memory index of
 `class → file → locations`. After that, a `FileSystemWatcher` keeps the
 index current incrementally - only the file that changed gets re-parsed. You
 can force a full rebuild with **"Smart Class Search: Rebuild Index"**.
 
+While a build runs, the status bar spins and the sidebar shows "Indexing
+files…". To keep builds fast:
+
+- Files larger than 1MB and `*.min.*` files are skipped, since they are bundles
+  or vendor code rather than components.
+- Files that can't contain a class (a quick text check finds no `className`,
+  `style`, class helper, array, or `class` attribute) skip the full parse.
+- A file that fails to parse stays in the index with no classes, so it is still
+  reachable by text search and isn't re-parsed on every start. The reason is
+  logged to the **Smart Class Search** output channel.
+
 ## Settings
 
 | Setting                                  | Default                                                   | Description                                                             |
 | ----------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `smartClassLookup.include`               | `**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs}` | Files to index                                   |
+| `smartClassLookup.include`               | `**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,astro,html,htm,php,erb,twig,hbs,css,scss,sass,less}` | Files to index |
 | `smartClassLookup.exclude`               | `**/{node_modules,.next,dist,build,coverage,.git,out}/**` | Files/folders to skip                                                   |
 | `smartClassLookup.minScore`              | `0.3`                                                     | Minimum match score (0–1) to show a result                             |
 | `smartClassLookup.maxResults`            | `25`                                                      | Max number of ranked results shown                                     |
@@ -248,17 +266,18 @@ can force a full rebuild with **"Smart Class Search: Rebuild Index"**.
 ```bash
 npm install
 npm run test        # tsc to out/ + runs the extractor/matcher smoke tests
-npm run bundle      # esbuild to dist/extension.js — what the extension actually loads
+npm run bundle      # esbuild to dist/extension.js + dist/parsePool.js — what the extension actually loads
 npm run watch       # the same bundle in watch mode, for the Extension Development Host
 npm run typecheck   # tsc --noEmit
 ```
 
 The extension entry point is the esbuild bundle at `dist/extension.js`, so run
-`npm run bundle` (or `npm run watch`) at least once before pressing `F5`. The
-`out/` tree produced by `npm run compile` exists only so the smoke tests can
-require each module in isolation.
+`npm run bundle` (or `npm run watch`) at least once before pressing `F5`.
+`dist/parsePool.js` is the parse worker, bundled separately because worker
+threads load it by path. The `out/` tree produced by `npm run compile` exists
+only so the smoke tests can require each module in isolation.
 
 To try it in VS Code: open this folder, press `F5` to launch an Extension
-Development Host with the extension loaded, open any React/Next.js project
-in that window, and run **"Smart Class Search"** from the Command
-Palette.
+Development Host with the extension loaded, open any project that uses
+Tailwind (React, Vue, Svelte, Astro, plain HTML, …) in that window, and run
+**"Smart Class Search"** from the Command Palette.
