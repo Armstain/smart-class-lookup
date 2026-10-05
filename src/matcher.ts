@@ -5,7 +5,7 @@ import type { ClassLocation, FileIndexEntry, NearMatch, SearchResult } from "./t
 const MAX_LOCATIONS_PER_RESULT = 12;
 const NEAR_MATCH_WEIGHT = 0.7;
 
-function getOrLoadSource(entry: FileIndexEntry): string {
+export function getOrLoadSource(entry: FileIndexEntry): string {
   if (entry.source !== undefined) {
     return entry.source;
   }

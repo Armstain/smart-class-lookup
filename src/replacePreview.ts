@@ -1,5 +1,6 @@
 import type { FileIndexEntry } from "./types";
 import { computeReplacements, type TextEdit } from "./classReplacer";
+import { getOrLoadSource } from "./matcher";
 
 export interface ReplaceOccurrence {
   key: string;
@@ -38,7 +39,7 @@ export function filterCandidateFiles(
       continue;
     }
 
-    const source = entry.source;
+    const source = getOrLoadSource(entry);
     if (source) {
       const sourceLower = source.toLowerCase();
       if (rawLower && sourceLower.includes(rawLower)) {
