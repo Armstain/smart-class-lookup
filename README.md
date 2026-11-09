@@ -1,7 +1,7 @@
 # Smart Class Search
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/armstain.smart-class-lookup?label=VS%20Code%20Marketplace&logo=visualstudiocode&logoColor=white&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=armstain.smart-class-lookup)
-[![Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/armstain.smart-class-lookup?label=installs&logo=visualstudiocode&logoColor=white&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=armstain.smart-class-lookup)
+[![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/armstain.smart-class-lookup.png?label=VS%20Code%20Marketplace&logo=visualstudiocode&logoColor=white&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=armstain.smart-class-lookup)
+[![Marketplace Installs](https://vsmarketplacebadges.dev/installs-short/armstain.smart-class-lookup.png?label=installs&logo=visualstudiocode&logoColor=white&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=armstain.smart-class-lookup)
 [![Open VSX](https://img.shields.io/open-vsx/v/nazmul-hossain-adnan/smart-class-lookup?label=Open%20VSX&logo=eclipseide&logoColor=white&color=C160EF)](https://open-vsx.org/extension/nazmul-hossain-adnan/smart-class-lookup)
 [![Open VSX Downloads](https://img.shields.io/open-vsx/dt/nazmul-hossain-adnan/smart-class-lookup?label=downloads&logo=eclipseide&logoColor=white&color=C160EF)](https://open-vsx.org/extension/nazmul-hossain-adnan/smart-class-lookup)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
