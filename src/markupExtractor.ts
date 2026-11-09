@@ -1,24 +1,6 @@
 import { tokenize } from "./classParser";
-import type { ClassLocation, ExtractedClass } from "./types";
-
-const MARKUP_EXTENSIONS = new Set([
-  ".vue",
-  ".svelte",
-  ".astro",
-  ".html",
-  ".htm",
-  ".php",
-  ".erb",
-  ".twig",
-  ".hbs",
-  ".handlebars",
-]);
-
-export function isMarkupFile(filePath: string): boolean {
-  const dot = filePath.lastIndexOf(".");
-  if (dot === -1) return false;
-  return MARKUP_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
-}
+import { SourceText, buildLineStarts, lineAt } from "./text";
+import type { ExtractedClass } from "./types";
 
 // Matches `class`, `className`, `class:list`, and the dynamic-binding prefixes used by Vue
 // (`:class`, `v-bind:class`) and Alpine (`x-bind:class`). Group layout:
@@ -52,7 +34,6 @@ export interface ClassAttrMatch {
   segments: ClassSegment[];
 }
 
-// Every quoted string inside an expression value — `{ 'bg-red-500': isError }` yields "bg-red-500".
 function expressionSegments(value: string, valueStart: number): ClassSegment[] {
   const re = new RegExp(QUOTED_SEGMENT_RE.source, QUOTED_SEGMENT_RE.flags);
   const segments: ClassSegment[] = [];
@@ -60,15 +41,14 @@ function expressionSegments(value: string, valueStart: number): ClassSegment[] {
 
   while ((match = re.exec(value)) !== null) {
     const text = match[1] ?? match[2] ?? match[3] ?? "";
-    const start = valueStart + match.index + 1; // +1 skips the opening quote
+    const start = valueStart + match.index + 1;
     segments.push({ start, end: start + text.length, text });
   }
 
   return segments;
 }
 
-// The runs of a static attribute value that sit outside any template interpolation. Returned as
-// spans rather than one blanked-out string so a replacement can never overwrite the interpolation.
+// Spans, not one blanked-out string, so a replacement can never overwrite an interpolation.
 function staticSegments(value: string, valueStart: number): ClassSegment[] {
   const re = new RegExp(INTERPOLATION_RE.source, INTERPOLATION_RE.flags);
   const segments: ClassSegment[] = [];
@@ -117,7 +97,6 @@ export function scanClassAttributes(source: string): ClassAttrMatch[] {
   return matches;
 }
 
-/** Svelte `class:foo={cond}` directives, as (offset, class name) pairs. */
 export function scanClassDirectives(source: string): ClassSegment[] {
   const re = new RegExp(SVELTE_CLASS_DIRECTIVE_RE.source, SVELTE_CLASS_DIRECTIVE_RE.flags);
   const found: ClassSegment[] = [];
@@ -132,42 +111,13 @@ export function scanClassDirectives(source: string): ClassSegment[] {
   return found;
 }
 
-function buildLineStarts(source: string): number[] {
-  const starts = [0];
-  for (let i = 0; i < source.length; i++) {
-    if (source.charCodeAt(i) === 10) starts.push(i + 1);
-  }
-  return starts;
-}
-
-function lineAt(lineStarts: number[], offset: number): number {
-  let lo = 0;
-  let hi = lineStarts.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (lineStarts[mid] <= offset) {
-      lo = mid;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return lo;
-}
-
 export function extractClassesFromMarkup(source: string, filePath: string): ExtractedClass[] {
-  const lineStarts = buildLineStarts(source);
-  const sourceLines = source.split(/\r?\n/);
+  const text = new SourceText(filePath, source);
   const found: ExtractedClass[] = [];
 
   const emit = (raw: string, offset: number): void => {
     if (!raw) return;
-    const line = lineAt(lineStarts, offset);
-    const location: ClassLocation = {
-      file: filePath,
-      line,
-      column: offset - lineStarts[line],
-      context: (sourceLines[line] ?? raw).trim().slice(0, 140),
-    };
+    const location = text.locationAt(offset);
     for (const token of tokenize(raw)) {
       found.push({ className: token, location });
     }

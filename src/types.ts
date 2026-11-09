@@ -1,3 +1,5 @@
+import type { SourceText } from "./text";
+
 export interface ClassLocation {
   file: string;
   line: number;
@@ -20,7 +22,7 @@ export interface FileIndexEntry {
   classes: Set<string>;
   locations: Map<string, ClassLocation[]>;
   mtimeMs: number;
-  source?: string;
+  text?: SourceText;
   /** Maps an arbitrary-value class with its bracket contents blanked out (e.g. "w-[]") to the actual classes in this file that share that base. */
   arbitraryIndex?: Map<string, string[]>;
 }
@@ -44,7 +46,7 @@ export interface SearchResult {
   nearMatches: NearMatch[];
   locations: ClassLocation[];
   maxLineMatches: number;
-  matchType?: MatchType; // defaults to "class" when absent (e.g. synthetic results)
+  matchType: MatchType;
   textScore?: number; // 0-1: 1 for a full-phrase hit, term-coverage otherwise
   textPhrase?: boolean; // true when the query matched as one contiguous substring
 }

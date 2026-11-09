@@ -1,63 +1,58 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import { WorkspaceIndexer } from "./indexer";
-import { extractClassesFromPaste, isStyleInput, parsePastedStyleList } from "./classParser";
-import { parseClassQuery } from "./astExtractor";
-import { rankFiles } from "./matcher";
-import { openAndHighlight, showResultsQuickPick } from "./quickPick";
-import { SidebarProvider } from "./sidebarProvider";
+import { applyReplace, clipboardQuery, previewReplace, reportReplace, searchIndex } from "./actions";
 import { findDuplicateClassGroups } from "./duplicates";
-import type { SearchResult } from "./types";
-import { computeReplacements } from "./classReplacer";
-import { filterCandidateFiles } from "./replacePreview";
-
-let indexer: WorkspaceIndexer | undefined;
-let statusBarItem: vscode.StatusBarItem | undefined;
+import { displayPath, revealLocations } from "./editor";
+import { WorkspaceIndexer } from "./indexer";
+import { parseQuery, parseReplace, queryFromPaste } from "./query";
+import { showResultsQuickPick } from "./quickPick";
+import { settings } from "./settings";
+import { SidebarProvider } from "./sidebarProvider";
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("Smart Class Search");
-  context.subscriptions.push(output);
+  const indexer = new WorkspaceIndexer(output, context);
+  const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
+  const sidebar = new SidebarProvider(context.extensionUri, indexer);
 
-  indexer = new WorkspaceIndexer(output, context);
-  context.subscriptions.push(indexer);
-
-  const sidebarProvider = new SidebarProvider(context.extensionUri, indexer);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider("smartClassLookup.sidebarView", sidebarProvider)
-  );
-
-  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
+  const updateStatusBar = () => {
+    statusBarItem.text = indexer.isBuilding
+      ? "$(sync~spin) Smart Class Search: indexing…"
+      : `$(search) Smart Class Search (${indexer.fileCount} files)`;
+  };
   statusBarItem.command = "smartClassLookup.search";
-  context.subscriptions.push(statusBarItem);
-
-  context.subscriptions.push(
-    indexer.onDidUpdate(() => updateStatusBar())
-  );
-
-  void indexer.buildFullIndex().then(() => indexer?.startWatching());
+  statusBarItem.tooltip = "Click to run Smart Class Search";
   updateStatusBar();
   statusBarItem.show();
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("smartClassLookup.search", runSearchCommand),
-    vscode.commands.registerCommand("smartClassLookup.replace", runReplaceCommand),
-    vscode.commands.registerCommand("smartClassLookup.rebuildIndex", async () => {
-      if (!indexer) return;
-      await vscode.window.withProgress(
+    output,
+    indexer,
+    statusBarItem,
+    indexer.onDidUpdate(updateStatusBar),
+    sidebar,
+    vscode.window.registerWebviewViewProvider("smartClassLookup.sidebarView", sidebar),
+    vscode.commands.registerCommand("smartClassLookup.search", () => runSearchCommand(indexer)),
+    vscode.commands.registerCommand("smartClassLookup.replace", () => runReplaceCommand(indexer)),
+    vscode.commands.registerCommand("smartClassLookup.findDuplicates", () => runFindDuplicatesCommand(indexer)),
+    vscode.commands.registerCommand("smartClassLookup.rebuildIndex", () =>
+      vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "Smart Class Search: rebuilding index..." },
-        () => indexer!.buildFullIndex()
-      );
-      void indexer.startWatching();
-    }),
-    vscode.commands.registerCommand("smartClassLookup.findDuplicates", runFindDuplicatesCommand)
+        () => indexer.buildFullIndex()
+      )
+    )
   );
+
+  void indexer.start();
 }
 
-async function runFindDuplicatesCommand(): Promise<void> {
-  if (!indexer) return;
+function selectedText(): string {
+  const editor = vscode.window.activeTextEditor;
+  return editor && !editor.selection.isEmpty ? editor.document.getText(editor.selection).trim() : "";
+}
 
-  const cfg = vscode.workspace.getConfiguration("smartClassLookup");
-  const minClasses = cfg.get<number>("duplicateMinClasses", 3);
+async function runFindDuplicatesCommand(indexer: WorkspaceIndexer): Promise<void> {
+  const minClasses = settings().duplicateMinClasses;
 
   const groups = findDuplicateClassGroups(indexer.getIndex(), minClasses);
   if (groups.length === 0) {
@@ -67,90 +62,41 @@ async function runFindDuplicatesCommand(): Promise<void> {
     return;
   }
 
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
   const groupPick = await vscode.window.showQuickPick(
-    groups.map((g) => ({
-      label: `$(files) ${new Set(g.occurrences.map((o) => o.file)).size} files share ${g.classes.length} classes`,
-      description: g.classes.slice(0, 6).join(" ") + (g.classes.length > 6 ? " …" : ""),
-      detail: [...new Set(g.occurrences.map((o) => o.file))]
-        .map((f) => (workspaceRoot ? path.relative(workspaceRoot, f) : f))
-        .join(", "),
-      group: g,
-    })),
+    groups.map((g) => {
+      const files = [...new Set(g.occurrences.map((o) => o.file))];
+      return {
+        label: `$(files) ${files.length} files share ${g.classes.length} classes`,
+        description: g.classes.slice(0, 6).join(" ") + (g.classes.length > 6 ? " …" : ""),
+        detail: files.map(displayPath).join(", "),
+        group: g,
+      };
+    }),
     {
       title: `Smart Class Search — ${groups.length} duplicate class combination${groups.length === 1 ? "" : "s"}`,
       placeHolder: "Select a duplicated class combination to see where it's used",
     }
   );
-
   if (!groupPick) return;
 
   const occurrencePick = await vscode.window.showQuickPick(
     groupPick.group.occurrences.map((o) => ({
       label: `$(file-code) ${path.basename(o.file)}:${o.line + 1}`,
-      description: workspaceRoot ? path.relative(workspaceRoot, o.file) : o.file,
+      description: displayPath(o.file),
       detail: o.context,
       occurrence: o,
     })),
     { title: "Occurrences of this class combination", placeHolder: "Select one to open it" }
   );
-
   if (!occurrencePick) return;
 
-  const { file, line, context } = occurrencePick.occurrence;
-  const syntheticResult: SearchResult = {
-    file,
-    matchedCount: groupPick.group.classes.length,
-    totalInputCount: groupPick.group.classes.length,
-    score: 1,
-    matchedClasses: groupPick.group.classes,
-    unmatchedClasses: [],
-    nearMatches: [],
-    locations: [{ file, line, column: 0, context }],
-    maxLineMatches: groupPick.group.classes.length,
-  };
-  await openAndHighlight(syntheticResult, 0, false);
+  const { file, line } = occurrencePick.occurrence;
+  await revealLocations(file, [{ line, column: 0 }], 0, false);
 }
 
-function updateStatusBar(): void {
-  if (!statusBarItem || !indexer) return;
-  statusBarItem.text = indexer.isBuilding
-    ? "$(sync~spin) Smart Class Search: indexing…"
-    : `$(search) Smart Class Search (${indexer.fileCount} files)`;
-  statusBarItem.tooltip = "Click to run Smart Class Search";
-}
-
-function looksLikeClassInput(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) return false;
-  if (/\bclass(?:Name)?\s*=/i.test(trimmed)) return true;
-  if (/[{};()=<>]/.test(trimmed)) return false;
-  return /^[a-zA-Z0-9!\-:[\]_./\s]+$/.test(trimmed) && trimmed.split(/\s+/).length >= 2;
-}
-
-async function runSearchCommand(): Promise<void> {
-  if (!indexer) return;
-
-  // An editor selection is an explicit target, so it wins over the clipboard — this is also what
-  // makes the editor context-menu entry ("Smart Class Search") search what you highlighted.
-  let prefill = "";
-  const editor = vscode.window.activeTextEditor;
-  const selected = editor && !editor.selection.isEmpty
-    ? editor.document.getText(editor.selection).trim()
-    : "";
-
-  if (selected) {
-    prefill = isStyleInput(selected) ? selected : extractClassesFromPaste(selected);
-  } else {
-    try {
-      const clip = await vscode.env.clipboard.readText();
-      if (looksLikeClassInput(clip) || isStyleInput(clip)) {
-        prefill = isStyleInput(clip) ? clip.trim() : extractClassesFromPaste(clip);
-      }
-    } catch {
-    }
-  }
+async function runSearchCommand(indexer: WorkspaceIndexer): Promise<void> {
+  const selected = selectedText();
+  const prefill = selected ? queryFromPaste(selected) : (await clipboardQuery()) ?? "";
 
   const raw = await vscode.window.showInputBox({
     title: "Smart Class Search",
@@ -164,60 +110,26 @@ async function runSearchCommand(): Promise<void> {
     valueSelection: prefill ? [0, prefill.length] : undefined,
     ignoreFocusOut: true,
   });
+  if (!raw?.trim()) return;
 
-  if (raw === undefined || raw.trim().length === 0) {
+  const query = parseQuery(raw);
+  if (query.isStyle && query.classes.length === 0) {
+    vscode.window.showWarningMessage("Smart Class Search: no style properties were found in that input.");
     return;
   }
 
-  const isStyle = isStyleInput(raw);
-  const inputClasses = isStyle ? parsePastedStyleList(raw) : parseClassQuery(raw);
-  // A plain-text query with no class tokens is still valid — text search handles it below.
-  if (isStyle && inputClasses.length === 0) {
-    vscode.window.showWarningMessage(
-      "Smart Class Search: no style properties were found in that input."
-    );
-    return;
-  }
-
-  const cfg = vscode.workspace.getConfiguration("smartClassLookup");
-  const minScore = cfg.get<number>("minScore", 0.15);
-  const maxResults = cfg.get<number>("maxResults", 25);
-
-  const results = rankFiles(inputClasses, indexer.getIndex(), {
-    minScore,
-    maxResults,
-    rawInput: isStyle ? undefined : raw,
-  });
-  await showResultsQuickPick(results);
+  await showResultsQuickPick(searchIndex(indexer.getIndex(), query));
 }
 
-async function runReplaceCommand(): Promise<void> {
-  if (!indexer) return;
-
-  const editor = vscode.window.activeTextEditor;
-  let prefillFind = "";
-  if (editor && !editor.selection.isEmpty) {
-    prefillFind = editor.document.getText(editor.selection).trim();
-  } else {
-    try {
-      const clip = await vscode.env.clipboard.readText();
-      if (looksLikeClassInput(clip) || isStyleInput(clip)) {
-        prefillFind = isStyleInput(clip) ? clip.trim() : extractClassesFromPaste(clip);
-      }
-    } catch {}
-  }
-
+async function runReplaceCommand(indexer: WorkspaceIndexer): Promise<void> {
   const rawFind = await vscode.window.showInputBox({
     title: "Smart Class Replace: Find",
     prompt: "Enter class(es) to find",
     placeHolder: "e.g. bg-red-500",
-    value: prefillFind,
+    value: selectedText() || (await clipboardQuery()),
     ignoreFocusOut: true,
   });
-
-  if (rawFind === undefined || rawFind.trim().length === 0) {
-    return;
-  }
+  if (!rawFind?.trim()) return;
 
   const rawReplace = await vscode.window.showInputBox({
     title: "Smart Class Replace: Replace",
@@ -226,92 +138,25 @@ async function runReplaceCommand(): Promise<void> {
     value: rawFind,
     ignoreFocusOut: true,
   });
+  if (rawReplace === undefined) return;
 
-  if (rawReplace === undefined) {
-    return;
-  }
-
-  const isStyle = isStyleInput(rawFind);
-  const targetClasses = isStyle ? parsePastedStyleList(rawFind) : parseClassQuery(rawFind);
-  const replacementClasses = isStyle ? parsePastedStyleList(rawReplace) : parseClassQuery(rawReplace);
-
-  if (targetClasses.length === 0 && !rawFind.trim()) {
-    vscode.window.showWarningMessage("Smart Class Search: invalid target.");
-    return;
-  }
-
-  const workspaceEdit = new vscode.WorkspaceEdit();
-  let totalOccurrences = 0;
-  let filesCount = 0;
-
-  const index = indexer.getIndex();
-  const matchedFiles = filterCandidateFiles(index, targetClasses, rawFind);
-
-  if (matchedFiles.length === 0) {
-    vscode.window.showInformationMessage("Smart Class Replace: No matching files found in the index.");
-    return;
-  }
-
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: "Smart Class Search: Analyzing files...",
-      cancellable: false,
-    },
-    async () => {
-      for (const file of matchedFiles) {
-        const uri = vscode.Uri.file(file);
-        let document: vscode.TextDocument;
-        try {
-          document = await vscode.workspace.openTextDocument(uri);
-        } catch {
-          continue;
-        }
-
-        const source = document.getText();
-        const edits = computeReplacements(source, targetClasses, replacementClasses, rawFind, rawReplace, file);
-        if (edits.length > 0) {
-          filesCount++;
-          totalOccurrences += edits.length;
-          for (const edit of edits) {
-            const range = new vscode.Range(
-              document.positionAt(edit.start),
-              document.positionAt(edit.end)
-            );
-            workspaceEdit.replace(uri, range, edit.newText);
-          }
-        }
-      }
-    }
+  const spec = parseReplace(rawFind, rawReplace);
+  const occurrences = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "Smart Class Search: Analyzing files..." },
+    () => previewReplace(indexer.getIndex(), spec)
   );
-
-  if (totalOccurrences === 0) {
-    vscode.window.showInformationMessage("Smart Class Replace: No matching class occurrences found in file code.");
+  if (occurrences.length === 0) {
+    vscode.window.showInformationMessage("Smart Class Replace: No matching class occurrences found.");
     return;
   }
 
+  const fileCount = new Set(occurrences.map((o) => o.file)).size;
   const confirm = await vscode.window.showWarningMessage(
-    `Are you sure you want to replace '${rawFind}' with '${rawReplace}' in ${filesCount} file(s) (${totalOccurrences} occurrence(s))?`,
+    `Are you sure you want to replace '${rawFind}' with '${rawReplace}' in ${fileCount} file(s) (${occurrences.length} occurrence(s))?`,
     { modal: true },
     "Replace"
   );
+  if (confirm !== "Replace") return;
 
-  if (confirm !== "Replace") {
-    return;
-  }
-
-  const success = await vscode.workspace.applyEdit(workspaceEdit);
-  if (success) {
-    vscode.window.showInformationMessage(
-      `Successfully replaced '${rawFind}' with '${rawReplace}' in ${filesCount} file(s) (${totalOccurrences} occurrence(s)).`
-    );
-  } else {
-    vscode.window.showErrorMessage("Smart Class Replace: Failed to apply edits.");
-  }
+  reportReplace(await applyReplace(indexer.getIndex(), spec, new Set(occurrences.map((o) => o.key))));
 }
-
-export function deactivate(): void {
-  indexer?.dispose();
-  indexer = undefined;
-}
-

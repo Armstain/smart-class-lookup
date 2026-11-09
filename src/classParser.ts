@@ -1,5 +1,10 @@
+export const CLASS_HELPER_NAMES = ["cn", "clsx", "classnames", "classNames", "twMerge", "cx"];
+
+const HELPER_ALTERNATION = CLASS_HELPER_NAMES.join("|");
+const LEADING_HELPER_CALL = new RegExp(`^(?:${HELPER_ALTERNATION})\\(`, "i");
+
 export function cleanToken(token: string): string {
-  let cleaned = token.replace(/^(?:cn|clsx|class[nN]ames|twMerge|cx)\(/i, "");
+  let cleaned = token.replace(LEADING_HELPER_CALL, "");
 
   cleaned = cleaned.replace(/^\[(["'`])/, "$1");
 
@@ -15,7 +20,7 @@ export function cleanToken(token: string): string {
     .replace(/^["'`{(.]*/, "")
     .replace(/["'`}),;]*$/, "");
 
-  if (/^(?:cn|clsx|class[nN]ames|twMerge|cx)\(/i.test(cleaned)) {
+  if (LEADING_HELPER_CALL.test(cleaned)) {
     cleaned = cleanToken(cleaned);
   }
 
@@ -37,14 +42,13 @@ export function tokenize(raw: string): string[] {
 // A helper call (cn(...), clsx(...)) or a whitespace-bounded ?/:/&&  signals a pasted code
 // fragment rather than a plain class list. ":" alone isn't checked — Tailwind variants like
 // hover:bg-red-500 have no surrounding whitespace and would false-positive.
-const CODE_HELPER_CALL = /\b(?:cn|clsx|class[nN]ames|twMerge|cx)\s*\(/;
+const CODE_HELPER_CALL = new RegExp(`\\b(?:${HELPER_ALTERNATION})\\s*\\(`);
 const CODE_SYNTAX_TOKEN = /(?:^|\s)[?:](?:\s|$)|&&/;
 
 function looksLikeCodeFragment(raw: string): boolean {
   return CODE_HELPER_CALL.test(raw) || CODE_SYNTAX_TOKEN.test(raw);
 }
 
-// Returns the joined contents of every quoted string, or null if there are none to extract.
 function extractQuotedSegments(raw: string): string | null {
   const matches = [...raw.matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)];
   if (matches.length === 0) {
@@ -56,14 +60,10 @@ function extractQuotedSegments(raw: string): string | null {
 const CLASS_ATTR_VALUE_RE = /\bclass(?:Name)?\s*=\s*\{?\s*["']([^"']*)["']\s*\}?/i;
 const CLASS_ATTR_TEMPLATE_RE = /\bclass(?:Name)?\s*=\s*\{\s*`([^`]*)`\s*\}/i;
 
-// The value of a `class=`/`className=` attribute embedded in a larger paste (e.g. a whole
-// `<div class="...">` copied out of DevTools), or null when there is no such attribute.
 export function attributeValueFromPaste(raw: string): string | null {
   return raw.match(CLASS_ATTR_VALUE_RE)?.[1] ?? raw.match(CLASS_ATTR_TEMPLATE_RE)?.[1] ?? null;
 }
 
-// A paste that is itself nothing but `class=`/`className=` plus its value, unwrapped down to the
-// bare expression so it can be parsed as one: `className={cn("a")}` -> `cn("a")`.
 export function unwrapClassAttribute(raw: string): string | null {
   const match = raw.match(/^\s*class(?:Name)?\s*=\s*([\s\S]+?)\s*$/i);
   if (!match) return null;
@@ -74,14 +74,9 @@ export function unwrapClassAttribute(raw: string): string | null {
 export function extractClassesFromPaste(raw: string): string {
   const trimmed = raw.trim();
 
-  const attrMatch = trimmed.match(CLASS_ATTR_VALUE_RE);
-  if (attrMatch) {
-    return attrMatch[1];
-  }
-
-  const templateMatch = trimmed.match(CLASS_ATTR_TEMPLATE_RE);
-  if (templateMatch) {
-    return templateMatch[1];
+  const attrValue = attributeValueFromPaste(trimmed);
+  if (attrValue !== null) {
+    return attrValue;
   }
 
   // A pasted code fragment mixes class strings with JS syntax — extract only what's inside
@@ -109,11 +104,17 @@ export function parsePastedClassList(raw: string): string[] {
   return result;
 }
 
-export function normalizeStyleKey(key: string): string {
+export function styleToken(rawKey: string, rawValue: string): string | null {
+  const key = normalizeStyleKey(rawKey);
+  const value = normalizeStyleValue(rawValue);
+  return key && value ? `style:${key}:${value}` : null;
+}
+
+function normalizeStyleKey(key: string): string {
   return key.replace(/-([a-z])/g, (g) => g[1]).toLowerCase();
 }
 
-export function normalizeStyleValue(val: string): string {
+function normalizeStyleValue(val: string): string {
   let clean = val.trim().replace(/^["'`]|["'`]$/g, "").toLowerCase();
   if (clean.endsWith(";")) {
     clean = clean.slice(0, -1).trim();
@@ -191,14 +192,9 @@ export function parsePastedStyleList(raw: string): string[] {
     if (colonIndex === -1) continue;
 
     const rawKey = trimmedPair.substring(0, colonIndex).trim().replace(/['""]/g, "");
-    const key = normalizeStyleKey(rawKey);
-
-    let val = trimmedPair.substring(colonIndex + 1).trim().replace(/['"",]/g, "");
-    const cleanVal = normalizeStyleValue(val);
-    if (!key || !cleanVal) continue;
-
-    const token = `style:${key}:${cleanVal}`;
-    if (!seen.has(token)) {
+    const rawVal = trimmedPair.substring(colonIndex + 1).trim().replace(/['"",]/g, "");
+    const token = styleToken(rawKey, rawVal);
+    if (token && !seen.has(token)) {
       seen.add(token);
       tokens.push(token);
     }

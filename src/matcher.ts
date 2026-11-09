@@ -1,21 +1,9 @@
-import * as fs from "fs";
 import { arbitraryValueBase } from "./classParser";
+import { entryText, type SourceText } from "./text";
 import type { ClassLocation, FileIndexEntry, NearMatch, SearchResult } from "./types";
 
 const MAX_LOCATIONS_PER_RESULT = 12;
 const NEAR_MATCH_WEIGHT = 0.7;
-
-export function getOrLoadSource(entry: FileIndexEntry): string {
-  if (entry.source !== undefined) {
-    return entry.source;
-  }
-  try {
-    entry.source = fs.readFileSync(entry.file, "utf8");
-    return entry.source;
-  } catch {
-    return "";
-  }
-}
 
 // Splits on delimiters that can't appear inside a class token, so variant colons, arbitrary
 // brackets, "!" and "/" stay intact (hover:bg-red-500, w-[30px], !mt-4, border-white/50).
@@ -23,23 +11,15 @@ function classTokensOnLine(line: string): Set<string> {
   return new Set(line.split(/[\s"'`{}()<>=,;]+/).filter(Boolean));
 }
 
-// Recomputes accurate per-line match counts from the real source — the class index caps
-// locations per class, so a line with the full combo can otherwise be undercounted.
-function refineLocations(
-  result: SearchResult,
-  inputClasses: string[],
-  entry: FileIndexEntry | undefined
-): void {
-  if (!entry) {
-    return;
-  }
-  const source = getOrLoadSource(entry);
-  if (!source) {
+// The class index caps locations per class (MAX_LOCATIONS_PER_CLASS), so a line with the full
+// combo can be undercounted; per-line counts are recomputed from the real source.
+function refineLocations(result: SearchResult, inputClasses: string[], text: SourceText): void {
+  if (!text.source) {
     return;
   }
 
   const querySet = new Set(inputClasses);
-  const lines = source.split(/\r?\n/);
+  const lines = text.lines;
 
   let best = 0;
   const perLine: { line: number; count: number }[] = [];
@@ -59,8 +39,6 @@ function refineLocations(
     }
   }
 
-  // No whole-token overlap (e.g. a file matched only via arbitrary-value near-matches, whose
-  // bracket contents differ) — leave the index-derived locations untouched.
   if (best === 0) {
     return;
   }
@@ -73,36 +51,34 @@ function refineLocations(
   const classLocs = perLine
     .filter((p) => p.count === best)
     .slice(0, MAX_LOCATIONS_PER_RESULT)
-    .map((p) => {
-      const lineText = lines[p.line];
-      let column = 0;
-      for (const cls of querySet) {
-        const idx = lineText.indexOf(cls);
-        if (idx !== -1 && (column === 0 || idx < column)) {
-          column = idx;
-        }
-      }
-      return {
-        file: result.file,
-        line: p.line,
-        column,
-        context: lineText.trim().slice(0, 140),
-      };
-    });
+    .map((p) => text.locationOfLine(p.line, firstColumn(lines[p.line], querySet)));
 
-  const merged = [...existingTextSearchLocs];
-  for (const loc of classLocs) {
+  result.locations = mergeByLine(existingTextSearchLocs, classLocs);
+  result.maxLineMatches = best;
+}
+
+function firstColumn(line: string, needles: Iterable<string>): number {
+  let column = 0;
+  for (const needle of needles) {
+    const idx = line.indexOf(needle);
+    if (idx !== -1 && (column === 0 || idx < column)) {
+      column = idx;
+    }
+  }
+  return column;
+}
+
+function mergeByLine(primary: ClassLocation[], secondary: ClassLocation[]): ClassLocation[] {
+  const merged = [...primary];
+  for (const loc of secondary) {
     if (!merged.some((l) => l.line === loc.line)) {
       merged.push(loc);
     }
   }
-  result.locations = merged.slice(0, MAX_LOCATIONS_PER_RESULT);
-  result.maxLineMatches = best;
+  return merged.slice(0, MAX_LOCATIONS_PER_RESULT);
 }
 
-// Splits a query into lower-cased terms, keeping class-like tokens (w-[10px], hover:bg-red-500)
-// whole and trimming prose punctuation ("TODO:" -> "todo").
-function queryTerms(query: string): string[] {
+export function queryTerms(query: string): string[] {
   const seen = new Set<string>();
   const terms: string[] = [];
   for (const raw of query.toLowerCase().split(/[\s,;]+/)) {
@@ -115,140 +91,42 @@ function queryTerms(query: string): string[] {
   return terms;
 }
 
-// Searches all raw source text (comments, JSX text, prop names, strings), not just class names.
-// A full contiguous phrase match is the strongest signal; failing that, terms co-occurring on
-// a line are ranked by coverage.
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function buildLineStarts(source: string): number[] {
-  const starts = [0];
-  for (let i = 0; i < source.length; i++) {
-    if (source.charCodeAt(i) === 10) starts.push(i + 1);
-  }
-  return starts;
+const STOP_WORDS = new Set(["in", "on", "at", "is", "it", "to", "of", "for", "or", "an", "by", "a", "the", "and", "with"]);
+
+interface TextQuery {
+  raw: string;
+  lower: string;
+  wsRegex?: RegExp;
+  firstWordLower: string;
+  variants: string[];
+  terms: string[];
+  stopRegexes: Map<string, RegExp>;
+  minRequiredTerms: number;
+  windowSize: number;
 }
 
-function lineAt(lineStarts: number[], offset: number): number {
-  let lo = 0;
-  let hi = lineStarts.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (lineStarts[mid] <= offset) lo = mid;
-    else hi = mid - 1;
-  }
-  return lo;
-}
-
-// ponytail: Regex & sliding-window term coverage fallback. Ceiling: O(lines * window) scan on large files; upgrade path: inverted trigram/ngram index if workspace text search needs scaling to 50k+ files.
-export function searchTextInFile(
-  query: string,
-  entry: FileIndexEntry,
-  options: { allowTermFallback?: boolean } = {}
-): SearchResult | null {
-  const source = getOrLoadSource(entry);
-  if (!source) {
+function prepareTextQuery(query: string): TextQuery | null {
+  const raw = query.trim();
+  if (raw.length < 2) {
     return null;
   }
+  const lower = raw.toLowerCase();
+  const rawWords = raw.split(/\s+/).filter(Boolean);
 
-  const rawQuery = query.trim();
-  if (rawQuery.length < 2) {
-    return null;
-  }
-
-  const lines = source.split(/\r?\n/);
-  const lineStarts = buildLineStarts(source);
-  const phraseLocs: ClassLocation[] = [];
-  const seenLineCol = new Set<string>();
-
-  const addLocation = (offset: number) => {
-    const line = lineAt(lineStarts, offset);
-    const col = offset - lineStarts[line];
-    const key = `${line}:${col}`;
-    if (!seenLineCol.has(key)) {
-      seenLineCol.add(key);
-      const lineText = lines[line] ?? "";
-      phraseLocs.push({
-        file: entry.file,
-        line,
-        column: col,
-        context: lineText.trim().slice(0, 140),
-      });
-    }
-  };
-
-  const queryLower = rawQuery.toLowerCase();
-  const sourceLower = source.toLowerCase();
-
-  // 1. Exact substring match across full file source
-  let subIdx = sourceLower.indexOf(queryLower);
-  while (subIdx !== -1) {
-    addLocation(subIdx);
-    subIdx = sourceLower.indexOf(queryLower, subIdx + 1);
-  }
-
-  // 2. Multi-line / whitespace-flexible phrase matching (handles newlines, tabs, indentation)
-  const rawWords = rawQuery.split(/\s+/).filter(Boolean);
-  if (rawWords.length > 1) {
-    const whitespacePattern = rawWords.map(escapeRegExp).join("\\s+");
-    try {
-      const re = new RegExp(whitespacePattern, "gi");
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(source)) !== null) {
-        addLocation(m.index);
-        if (m.index === re.lastIndex) re.lastIndex++;
-      }
-    } catch {
-      // ignore regex syntax issues
-    }
-  }
-
-  // 3. Identifier variants (e.g. "Sign in" -> "signin", "sign_in", "sign-in")
-  const queryWords = queryLower.split(/[\s_-]+/).filter(Boolean);
-  if (queryWords.length > 1) {
-    const variants = [queryWords.join(""), queryWords.join("_"), queryWords.join("-")];
-    for (const v of variants) {
-      if (v.length < 2 || v === queryLower) continue;
-      let vIdx = sourceLower.indexOf(v);
-      while (vIdx !== -1) {
-        addLocation(vIdx);
-        vIdx = sourceLower.indexOf(v, vIdx + 1);
-      }
-    }
-  }
-
-  if (phraseLocs.length > 0) {
-    return {
-      file: entry.file,
-      matchedCount: phraseLocs.length,
-      totalInputCount: 1,
-      score: 1.0,
-      matchedClasses: [query],
-      unmatchedClasses: [],
-      nearMatches: [],
-      locations: phraseLocs.slice(0, MAX_LOCATIONS_PER_RESULT),
-      maxLineMatches: 1,
-      matchType: "text",
-      textScore: 1.0,
-      textPhrase: true,
-    };
-  }
-
-  // 4. Term-coverage fallback
-  if (options.allowTermFallback === false) {
-    return null;
-  }
+  const queryWords = lower.split(/[\s_-]+/).filter(Boolean);
+  const variants =
+    queryWords.length > 1
+      ? [queryWords.join(""), queryWords.join("_"), queryWords.join("-")].filter(
+          (v) => v.length >= 2 && v !== lower
+        )
+      : [];
 
   const terms = queryTerms(query);
-  if (terms.length === 0) {
-    return null;
-  }
-
-  const STOP_WORDS = new Set(["in", "on", "at", "is", "it", "to", "of", "for", "or", "an", "by", "a", "the", "and", "with"]);
   const significantTerms = terms.filter((t) => !STOP_WORDS.has(t));
-  const minRequiredTerms = significantTerms.length > 0 ? significantTerms.length : terms.length;
-
   const stopRegexes = new Map<string, RegExp>();
   for (const term of terms) {
     if (STOP_WORDS.has(term)) {
@@ -256,87 +134,148 @@ export function searchTextInFile(
     }
   }
 
+  return {
+    raw,
+    lower,
+    wsRegex: rawWords.length > 1 ? new RegExp(rawWords.map(escapeRegExp).join("\\s+"), "gi") : undefined,
+    firstWordLower: (rawWords[0] ?? "").toLowerCase(),
+    variants,
+    terms,
+    stopRegexes,
+    minRequiredTerms: significantTerms.length > 0 ? significantTerms.length : terms.length,
+    windowSize: Math.min(10, Math.max(5, rawWords.length + 2)),
+  };
+}
+
+function termMatches(q: TextQuery, term: string, text: string): boolean {
+  const stopRe = q.stopRegexes.get(term);
+  return stopRe ? stopRe.test(text) : text.includes(term);
+}
+
+export function searchTextInFile(
+  query: string,
+  entry: FileIndexEntry,
+  options: { allowTermFallback?: boolean } = {}
+): SearchResult | null {
+  const q = prepareTextQuery(query);
+  return q ? matchText(q, entry, options.allowTermFallback !== false) : null;
+}
+
+function phraseOffsets(q: TextQuery, text: SourceText): number[] {
+  const offsets: number[] = [];
+  const collect = (needle: string) => {
+    for (let i = text.lower.indexOf(needle); i !== -1; i = text.lower.indexOf(needle, i + 1)) {
+      offsets.push(i);
+    }
+  };
+
+  collect(q.lower);
+  if (q.wsRegex && text.lower.includes(q.firstWordLower)) {
+    const re = q.wsRegex;
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text.source)) !== null) {
+      offsets.push(m.index);
+      if (m.index === re.lastIndex) re.lastIndex++;
+    }
+  }
+  for (const v of q.variants) {
+    collect(v);
+  }
+  return offsets;
+}
+
+function textResult(
+  q: TextQuery,
+  file: string,
+  locations: ClassLocation[],
+  matched: number,
+  total: number,
+  phrase: boolean
+): SearchResult {
+  const score = phrase ? 1 : matched / total;
+  return {
+    file,
+    matchedCount: matched,
+    totalInputCount: total,
+    score,
+    matchedClasses: [q.raw],
+    unmatchedClasses: [],
+    nearMatches: [],
+    locations: locations.slice(0, MAX_LOCATIONS_PER_RESULT),
+    maxLineMatches: phrase ? 1 : matched,
+    matchType: "text",
+    textScore: score,
+    textPhrase: phrase,
+  };
+}
+
+function matchText(q: TextQuery, entry: FileIndexEntry, allowTermFallback: boolean): SearchResult | null {
+  const text = entryText(entry);
+  if (!text.source) {
+    return null;
+  }
+
+  const offsets = phraseOffsets(q, text);
+  if (offsets.length > 0) {
+    const seen = new Set<string>();
+    const locations: ClassLocation[] = [];
+    for (const offset of offsets) {
+      const loc = text.locationAt(offset);
+      const key = `${loc.line}:${loc.column}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      locations.push(loc);
+    }
+    return textResult(q, entry.file, locations, locations.length, 1, true);
+  }
+
+  const { terms, minRequiredTerms } = q;
+  if (!allowTermFallback || terms.length === 0) {
+    return null;
+  }
+
+  let present = 0;
+  for (const term of terms) {
+    if (termMatches(q, term, text.lower)) present++;
+  }
+  if (present < minRequiredTerms) {
+    return null;
+  }
+
+  const lowerLines = text.lowerLines;
+  const countTerms = (s: string) => terms.reduce((n, term) => n + (termMatches(q, term, s) ? 1 : 0), 0);
+
   let bestTermCount = 0;
   const perLine: { line: number; count: number }[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const lineLower = lines[i].toLowerCase();
-    let count = 0;
-    for (const term of terms) {
-      const stopRe = stopRegexes.get(term);
-      const isMatch = stopRe ? stopRe.test(lineLower) : lineLower.includes(term);
-      if (isMatch) count++;
-    }
-
+  const consider = (line: number, count: number) => {
     if (count >= minRequiredTerms) {
-      perLine.push({ line: i, count });
+      perLine.push({ line, count });
       if (count > bestTermCount) bestTermCount = count;
     }
-  }
+  };
 
-  // If per-line didn't match, check sliding window of lines for multi-line spread
-  if (bestTermCount === 0 && lines.length > 0) {
-    const WINDOW_SIZE = Math.min(10, Math.max(5, rawWords.length + 2));
-    for (let i = 0; i < lines.length; i++) {
-      const windowText = lines.slice(i, i + WINDOW_SIZE).join(" ").toLowerCase();
-      let count = 0;
-      for (const term of terms) {
-        const stopRe = stopRegexes.get(term);
-        const isMatch = stopRe ? stopRe.test(windowText) : windowText.includes(term);
-        if (isMatch) count++;
-      }
-      if (count >= minRequiredTerms) {
-        perLine.push({ line: i, count });
-        if (count > bestTermCount) bestTermCount = count;
-      }
+  for (let i = 0; i < lowerLines.length; i++) {
+    consider(i, countTerms(lowerLines[i]));
+  }
+  if (bestTermCount === 0) {
+    for (let i = 0; i < lowerLines.length; i++) {
+      consider(i, countTerms(lowerLines.slice(i, i + q.windowSize).join(" ")));
     }
   }
-
-  if (bestTermCount === 0 || bestTermCount < minRequiredTerms) {
+  if (bestTermCount === 0) {
     return null;
   }
 
   const locations = perLine
     .filter((p) => p.count === bestTermCount)
     .slice(0, MAX_LOCATIONS_PER_RESULT)
-    .map((p) => {
-      const lineText = lines[p.line] ?? "";
-      const lineLower = lineText.toLowerCase();
-      let column = 0;
-      for (const term of terms) {
-        const idx = lineLower.indexOf(term);
-        if (idx !== -1 && (column === 0 || idx < column)) {
-          column = idx;
-        }
-      }
-      return {
-        file: entry.file,
-        line: p.line,
-        column,
-        context: lineText.trim().slice(0, 140),
-      };
-    });
+    .map((p) => text.locationOfLine(p.line, firstColumn(lowerLines[p.line] ?? "", terms)));
 
-  const coverage = bestTermCount / terms.length;
-  return {
-    file: entry.file,
-    matchedCount: bestTermCount,
-    totalInputCount: terms.length,
-    score: coverage,
-    matchedClasses: [query],
-    unmatchedClasses: [],
-    nearMatches: [],
-    locations,
-    maxLineMatches: bestTermCount,
-    matchType: "text",
-    textScore: coverage,
-    textPhrase: false,
-  };
+  return textResult(q, entry.file, locations, bestTermCount, terms.length, false);
 }
 
-export function scoreFile(
-  inputClasses: string[],
-  entry: FileIndexEntry
-): SearchResult | null {
+export function scoreFile(inputClasses: string[], entry: FileIndexEntry): SearchResult | null {
   if (inputClasses.length === 0) {
     return null;
   }
@@ -367,15 +306,12 @@ export function scoreFile(
   const score =
     (matchedClasses.length + nearMatches.length * NEAR_MATCH_WEIGHT) / inputClasses.length;
 
-  const nearMatchActualNames = nearMatches.map((nm) => nm.actual);
-  const matchedAndNear = [...matchedClasses, ...nearMatchActualNames];
+  const matchedAndNear = [...matchedClasses, ...nearMatches.map((nm) => nm.actual)];
 
-  // Group matched (+ near-matched) classes by line number to find the maximum matches on any single line
   const lineToMatches = new Map<number, Set<string>>();
   const lineToLocation = new Map<number, ClassLocation>();
   for (const cls of matchedAndNear) {
-    const locs = entry.locations.get(cls) ?? [];
-    for (const loc of locs) {
+    for (const loc of entry.locations.get(cls) ?? []) {
       let set = lineToMatches.get(loc.line);
       if (!set) {
         set = new Set();
@@ -395,10 +331,8 @@ export function scoreFile(
     }
   }
 
-  // Only surface lines tied for the best overlap with the query. The point of the
-  // sub-location list is "other places this same combination shows up" (e.g. a repeated
-  // component), not "every element that happens to share one matched class" — a line with
-  // just 1 of 7 matched classes isn't a useful candidate once a fuller match exists.
+  // Sub-locations are "other places this same combination shows up" (e.g. a repeated component),
+  // not every element sharing one matched class, so only lines tied for the best overlap count.
   const locations = Array.from(lineToLocation.entries())
     .filter(([line]) => lineToMatches.get(line)?.size === maxLineMatches)
     .sort(([lineA], [lineB]) => lineA - lineB)
@@ -443,7 +377,6 @@ export function rankFiles(
   const minScore = options.minScore ?? 0;
   const resultsMap = new Map<string, SearchResult>();
 
-  // 1. Class-based lookup, tracking which query tokens matched a real class anywhere.
   const matchedTokens = new Set<string>();
   for (const entry of index.values()) {
     const result = scoreFile(inputClasses, entry);
@@ -451,7 +384,7 @@ export function rankFiles(
       for (const cls of result.matchedClasses) matchedTokens.add(cls);
       for (const nm of result.nearMatches) matchedTokens.add(nm.input);
       if (result.score >= minScore) {
-        refineLocations(result, inputClasses, entry);
+        refineLocations(result, inputClasses, entryText(entry));
         resultsMap.set(entry.file, result);
       }
     }
@@ -460,28 +393,19 @@ export function rankFiles(
   const classRate = inputClasses.length > 0 ? matchedTokens.size / inputClasses.length : 0;
   const proseQuery = classRate < CLASS_QUERY_THRESHOLD;
 
-  // 2. Text search — always run when there's a usable raw query, across all source text.
-  const rawInput = options.rawInput?.trim();
-  if (rawInput && rawInput.length >= 2) {
+  const textQuery = options.rawInput ? prepareTextQuery(options.rawInput) : null;
+  if (textQuery) {
     for (const entry of index.values()) {
-      const textResult = searchTextInFile(rawInput, entry, { allowTermFallback: proseQuery });
+      const textResult = matchText(textQuery, entry, proseQuery);
       if (!textResult) continue;
 
       const existing = resultsMap.get(entry.file);
       if (existing) {
-        // Both signals matched — text-hit lines first, the literal query is the stronger locator.
-        const mergedLocations = [...textResult.locations];
-        for (const loc of existing.locations) {
-          if (!mergedLocations.some((l) => l.line === loc.line)) {
-            mergedLocations.push(loc);
-          }
-        }
-        existing.locations = mergedLocations.slice(0, MAX_LOCATIONS_PER_RESULT);
+        // The literal query is the stronger locator, so text-hit lines go first.
+        existing.locations = mergeByLine(textResult.locations, existing.locations);
         existing.matchType = "both";
         existing.textScore = textResult.textScore;
-        existing.textPhrase = textResult.textPhrase;
-        // Only a full-phrase hit is strong enough to force a perfect score; a scattered-term
-        // hit shouldn't inflate a partial class match.
+        // A scattered-term hit shouldn't inflate a partial class match; only a full phrase does.
         if (textResult.textPhrase) {
           existing.score = 1.0;
           existing.maxLineMatches = Math.max(existing.maxLineMatches, inputClasses.length || 1);
@@ -494,7 +418,6 @@ export function rankFiles(
 
   const results = Array.from(resultsMap.values());
 
-  // 3. Adaptive ranking: prose queries rank text first, class queries rank class first.
   results.sort((a, b) => {
     if (proseQuery) {
       const at = hasTextSignal(a) ? 0 : 1;
@@ -504,11 +427,9 @@ export function rankFiles(
         const ax = a.textScore ?? 0;
         const bx = b.textScore ?? 0;
         if (bx !== ax) return bx - ax;
-        return classComparator(a, b);
       }
       return classComparator(a, b);
     }
-    // Class query: class + both lead, text-only trails.
     const at = a.matchType === "text" ? 1 : 0;
     const bt = b.matchType === "text" ? 1 : 0;
     if (at !== bt) return at - bt;
@@ -524,7 +445,6 @@ export function rankFiles(
   return applyLimit(results, options.maxResults, proseQuery);
 }
 
-// Slices to maxResults, reserving a few text-only hits so they aren't truncated off the bottom.
 function applyLimit(
   results: SearchResult[],
   maxResults: number | undefined,
@@ -535,7 +455,7 @@ function applyLimit(
   }
   const head = results.slice(0, maxResults);
   if (proseQuery) {
-    return head; // prose mode already ranks text first — nothing to rescue
+    return head;
   }
   const textInHead = head.filter((r) => r.matchType === "text").length;
   const need = RESERVED_TEXT_SLOTS - textInHead;

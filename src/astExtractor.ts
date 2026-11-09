@@ -1,65 +1,32 @@
-import { parse } from "@babel/parser";
 import traverse, { type NodePath } from "@babel/traverse";
 import type * as t from "@babel/types";
+import { isClassHelperCall, parseJs } from "./babel";
 import {
+  CLASS_HELPER_NAMES,
   tokenize,
   cleanToken,
-  normalizeStyleKey,
-  normalizeStyleValue,
+  styleToken,
   parsePastedClassList,
   attributeValueFromPaste,
   unwrapClassAttribute,
 } from "./classParser";
-import {
-  embeddedScriptBlocks,
-  extractClassesFromMarkup,
-  isMarkupFile,
-} from "./markupExtractor";
+import { isMarkupFile, isStyleFile } from "./languages";
+import { embeddedScriptBlocks, extractClassesFromMarkup } from "./markupExtractor";
+import { SourceText, location, splitLines } from "./text";
 import type { ClassLocation, ExtractedClass, ExtractionResult } from "./types";
 
-export type { ExtractedClass, ExtractionResult } from "./types";
-
-const STYLE_EXTENSIONS = new Set([".css", ".scss", ".sass", ".less"]);
-
-export function isStyleFile(filePath: string): boolean {
-  const dot = filePath.lastIndexOf(".");
-  if (dot === -1) return false;
-  return STYLE_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
-}
+const MAX_LOCATIONS_PER_CLASS = 8;
 
 // ponytail: Fast regex-based class extractor for stylesheets without bringing in PostCSS/csstree. Ceiling: may match decimals or comments; upgrade path: PostCSS parser if strict CSS AST is ever needed.
-export function extractClassesFromStyle(source: string, filePath: string): ExtractedClass[] {
-  const lineStarts = [0];
-  for (let i = 0; i < source.length; i++) {
-    if (source.charCodeAt(i) === 10) lineStarts.push(i + 1);
-  }
-  const sourceLines = source.split(/\r?\n/);
+function extractClassesFromStyle(source: string, filePath: string): ExtractedClass[] {
+  const text = new SourceText(filePath, source);
   const found: ExtractedClass[] = [];
-
-  const lineAt = (offset: number) => {
-    let lo = 0;
-    let hi = lineStarts.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (lineStarts[mid] <= offset) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
-  };
 
   const emit = (token: string, offset: number) => {
     if (!token) return;
-    const line = lineAt(offset);
-    const location: ClassLocation = {
-      file: filePath,
-      line,
-      column: offset - lineStarts[line],
-      context: (sourceLines[line] ?? token).trim().slice(0, 140),
-    };
-    found.push({ className: token, location });
+    found.push({ className: token, location: text.locationAt(offset) });
   };
 
-  // 1. Class selectors: .foo, .gm-style-iw
   const CLASS_SELECTOR_RE = /\.([a-zA-Z0-9_\-\\:\[\]\/\#\%]+)/g;
   let match: RegExpExecArray | null;
   while ((match = CLASS_SELECTOR_RE.exec(source)) !== null) {
@@ -68,7 +35,6 @@ export function extractClassesFromStyle(source: string, filePath: string): Extra
     emit(rawCls, offset);
   }
 
-  // 2. Tailwind @apply rules: @apply p-4 flex;
   const APPLY_RE = /@apply\s+([^;{}]+)/g;
   while ((match = APPLY_RE.exec(source)) !== null) {
     const applyBody = match[1];
@@ -85,25 +51,6 @@ export function extractClassesFromStyle(source: string, filePath: string): Extra
 
   return found;
 }
-
-const CLASS_HELPER_NAMES = new Set([
-  "cn",
-  "clsx",
-  "classnames",
-  "classNames",
-  "twMerge",
-  "cx",
-]);
-
-const BABEL_PLUGINS: import("@babel/parser").ParserPlugin[] = [
-  "jsx",
-  "typescript",
-  "decorators-legacy",
-  "classProperties",
-  "objectRestSpread",
-  "optionalChaining",
-  "nullishCoalescingOperator",
-];
 
 // Cheap textual pre-check so callers can skip the full Babel parse for files that could
 // not possibly yield a class: extractClassesFromSource only ever emits from a `className`/
@@ -148,8 +95,6 @@ export function parseClassQuery(raw: string): string[] {
   const trimmed = raw.trim();
   if (!trimmed) return [];
 
-  // `className={...}` unwraps to its expression; a class attribute inside a larger markup paste
-  // (`<div class="...">`) contributes only its value. Otherwise the paste is the query.
   const candidate = unwrapClassAttribute(trimmed) ?? attributeValueFromPaste(trimmed) ?? trimmed;
   // Unbalanced backticks are common when a template literal is selected by eye; they would
   // otherwise break every wrapper.
@@ -164,7 +109,6 @@ export function parseClassQuery(raw: string): string[] {
     return [...seen];
   }
 
-  // Nothing parsed — fall back to text tokenization (CSS selectors, stray punctuation, prose).
   return parsePastedClassList(raw);
 }
 
@@ -195,19 +139,15 @@ function extractClassesFromJs(
 ): ExtractionResult {
   let ast;
   try {
-    ast = parse(source, {
-      sourceType: "module",
-      plugins: BABEL_PLUGINS,
-      // Indexing wants every class it can salvage from a file that may be mid-edit. Query parsing
-      // wants the opposite: a wrapper that doesn't fit must fail outright so the next one is
-      // tried, instead of recovering into a garbage AST that yields junk tokens.
-      errorRecovery: !strict,
-    });
+    // Indexing wants every class it can salvage from a file that may be mid-edit. Query parsing
+    // wants the opposite: a wrapper that doesn't fit must fail outright so the next one is
+    // tried, instead of recovering into a garbage AST that yields junk tokens.
+    ast = parseJs(source, !strict);
   } catch (err) {
     return { classes: [], parseError: err instanceof Error ? err.message : String(err) };
   }
 
-  const sourceLines = source.split(/\r?\n/);
+  const sourceLines = splitLines(source);
   const found: ExtractedClass[] = [];
 
   const varInitializers = new Map<string, t.Node>();
@@ -222,19 +162,18 @@ function extractClassesFromJs(
   });
   const resolvingVars = new Set<string>();
 
-  const emit = (raw: string, node: t.Node) => {
-    if (!raw) return;
+  const locationOf = (node: t.Node): ClassLocation => {
     const loc = node.loc;
     const lineIndex = loc ? loc.start.line - 1 : 0;
-    const contextLine = sourceLines[lineIndex] ?? raw;
-    const location: ClassLocation = {
-      file: filePath,
-      line: lineIndex + lineOffset,
-      column: loc ? loc.start.column : 0,
-      context: contextLine.trim().slice(0, 140),
-    };
+    const column = loc ? loc.start.column : 0;
+    return { ...location(filePath, sourceLines, lineIndex, column), line: lineIndex + lineOffset };
+  };
+
+  const emit = (raw: string, node: t.Node) => {
+    if (!raw) return;
+    const loc = locationOf(node);
     for (const token of tokenize(raw)) {
-      found.push({ className: token, location });
+      found.push({ className: token, location: loc });
     }
   };
 
@@ -305,15 +244,7 @@ function extractClassesFromJs(
       }
 
       case "CallExpression": {
-        const callee = node.callee;
-        const calleeName =
-          callee.type === "Identifier"
-            ? callee.name
-            : callee.type === "MemberExpression" && callee.property.type === "Identifier"
-            ? callee.property.name
-            : undefined;
-
-        if (calleeName && CLASS_HELPER_NAMES.has(calleeName)) {
+        if (isClassHelperCall(node)) {
           for (const arg of node.arguments) {
             collectFromExpression(arg as t.Node);
           }
@@ -331,8 +262,6 @@ function extractClassesFromJs(
     }
   }
 
-  // Resolves `const x = <init>` back to <init> so className={x}/style={x} can be
-  // followed. Guards against cycles (const a = b; const b = a;) via resolvingVars.
   function resolveVariable(name: string, visit: (node: t.Node | null | undefined) => void): void {
     const init = varInitializers.get(name);
     if (!init || resolvingVars.has(name)) return;
@@ -367,24 +296,12 @@ function extractClassesFromJs(
 
         if (!key) continue;
 
-        const normalizedKey = normalizeStyleKey(key);
         const valNode = prop.value;
-
         if (valNode.type === "StringLiteral" || valNode.type === "NumericLiteral") {
-          const val = String(valNode.value);
-          const cleanVal = normalizeStyleValue(val);
-          if (!cleanVal) continue;
-
-          const loc = prop.loc || node.loc;
-          const lineIndex = loc ? loc.start.line - 1 : 0;
-          const contextLine = sourceLines[lineIndex] ?? `${key}: ${valNode.value}`;
-          const location: ClassLocation = {
-            file: filePath,
-            line: lineIndex + lineOffset,
-            column: loc ? loc.start.column : 0,
-            context: contextLine.trim().slice(0, 140),
-          };
-          found.push({ className: `style:${normalizedKey}:${cleanVal}`, location });
+          const token = styleToken(key, String(valNode.value));
+          if (token) {
+            found.push({ className: token, location: locationOf(prop.loc ? prop : node) });
+          }
         }
       }
     }
@@ -407,15 +324,7 @@ function extractClassesFromJs(
     },
 
     CallExpression(path: NodePath<t.CallExpression>) {
-      const callee = path.node.callee;
-      const calleeName =
-        callee.type === "Identifier"
-          ? callee.name
-          : callee.type === "MemberExpression" && callee.property.type === "Identifier"
-          ? callee.property.name
-          : undefined;
-
-      if (calleeName && CLASS_HELPER_NAMES.has(calleeName)) {
+      if (isClassHelperCall(path.node)) {
         for (const arg of path.node.arguments) {
           collectFromExpression(arg as t.Node);
         }
@@ -461,7 +370,7 @@ export function parseSource(source: string, filePath: string): ParsedFile {
     classes.add(className);
     const list = locations.get(className);
     if (list) {
-      if (list.length < 8) list.push(location); // cap per-class locations
+      if (list.length < MAX_LOCATIONS_PER_CLASS) list.push(location);
     } else {
       locations.set(className, [location]);
     }

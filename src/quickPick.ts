@@ -1,13 +1,8 @@
 import * as path from "path";
 import * as vscode from "vscode";
+import { clearHighlight, displayPath, revealLocations, uniqueLines } from "./editor";
+import { settings } from "./settings";
 import type { SearchResult } from "./types";
-
-const highlightDecorationType = vscode.window.createTextEditorDecorationType({
-  backgroundColor: new vscode.ThemeColor("editor.findMatchHighlightBackground"),
-  border: "1px solid",
-  borderColor: new vscode.ThemeColor("editor.findMatchBorder"),
-  borderRadius: "2px",
-});
 
 function formatPercent(score: number): string {
   return `${Math.round(score * 100)}%`;
@@ -23,28 +18,13 @@ const COPY_CLASSES_BUTTON: vscode.QuickInputButton = {
   tooltip: "Copy matched classes",
 };
 
-// ---------------------------------------------------------------------------
-// Item types
-// ---------------------------------------------------------------------------
-
-interface FileItem extends vscode.QuickPickItem {
-  itemType: "file";
+interface Item extends vscode.QuickPickItem {
   result: SearchResult;
   locationIndex: number;
 }
 
-interface LocationItem extends vscode.QuickPickItem {
-  itemType: "location";
-  result: SearchResult;
-  locationIndex: number;
-}
-
-type Item = FileItem | LocationItem;
-
-function buildItems(result: SearchResult, workspaceRoot: string | undefined): Item[] {
-  const relativePath = workspaceRoot
-    ? path.relative(workspaceRoot, result.file)
-    : result.file;
+function buildItems(result: SearchResult): Item[] {
+  const relativePath = displayPath(result.file);
 
   const isTextOnly = result.matchType === "text";
 
@@ -69,12 +49,7 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
     detailParts.push(`missing: ${missingPreview}${missingOverflow}`);
   }
 
-  const seenLines = new Set<number>();
-  const dedupedLocations = result.locations.filter((loc) => {
-    if (seenLines.has(loc.line)) return false;
-    seenLines.add(loc.line);
-    return true;
-  });
+  const dedupedLocations = uniqueLines(result.locations);
 
   const description = isTextOnly
     ? "$(search) text match"
@@ -82,8 +57,7 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
         result.matchType === "both" ? "  $(search) +text" : ""
       }`;
 
-  const fileItem: FileItem = {
-    itemType: "file",
+  const fileItem: Item = {
     result,
     locationIndex: 0,
     label: `$(file-code) ${path.basename(result.file)}`,
@@ -96,8 +70,7 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
     return [fileItem];
   }
 
-  const locationItems: LocationItem[] = dedupedLocations.map((loc, i) => ({
-    itemType: "location",
+  const locationItems: Item[] = dedupedLocations.map((loc) => ({
     result,
     locationIndex: result.locations.indexOf(loc),
     label: `    $(symbol-keyword) Line ${loc.line + 1}`,
@@ -108,10 +81,6 @@ function buildItems(result: SearchResult, workspaceRoot: string | undefined): It
   return [fileItem, ...locationItems];
 }
 
-// ---------------------------------------------------------------------------
-// Main entry point
-// ---------------------------------------------------------------------------
-
 export async function showResultsQuickPick(results: SearchResult[]): Promise<void> {
   if (results.length === 0) {
     vscode.window.showInformationMessage(
@@ -120,8 +89,7 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
     return;
   }
 
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const items: Item[] = results.flatMap((r) => buildItems(r, workspaceRoot));
+  const items: Item[] = results.flatMap(buildItems);
 
   const originalEditor = vscode.window.activeTextEditor;
   let previewEditor: vscode.TextEditor | undefined;
@@ -135,15 +103,12 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
 
   const subs: vscode.Disposable[] = [];
 
-  const cfg = vscode.workspace.getConfiguration("smartClassLookup");
-  const enablePreview = cfg.get<boolean>("enablePreview", true);
-
-  if (enablePreview) {
+  if (settings().enablePreview) {
     subs.push(
       qp.onDidChangeActive(async (activeItems) => {
         const active = activeItems[0];
         if (!active) return;
-        previewEditor = await openAndHighlight(active.result, active.locationIndex, true);
+        previewEditor = await revealLocations(active.result.file, active.result.locations, active.locationIndex, true);
       })
     );
   }
@@ -173,7 +138,7 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
   for (const s of subs) s.dispose();
 
   if (!picked) {
-    clearDecorations(previewEditor);
+    clearHighlight(previewEditor);
     if (originalEditor) {
       await vscode.window.showTextDocument(originalEditor.document, {
         viewColumn: originalEditor.viewColumn,
@@ -184,59 +149,5 @@ export async function showResultsQuickPick(results: SearchResult[]): Promise<voi
     return;
   }
 
-  await openAndHighlight(picked.result, picked.locationIndex, false);
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-export function clearDecorations(editor: vscode.TextEditor | undefined): void {
-  editor?.setDecorations(highlightDecorationType, []);
-}
-
-export async function openAndHighlight(
-  result: SearchResult,
-  locationIndex: number,
-  preview: boolean
-): Promise<vscode.TextEditor> {
-  const uri = vscode.Uri.file(result.file);
-  const document = await vscode.workspace.openTextDocument(uri);
-  const editor = await vscode.window.showTextDocument(document, { preview, preserveFocus: preview });
-
-  const targetLoc = result.locations[locationIndex] ?? result.locations[0];
-  if (!targetLoc) return editor;
-
-  const targetPosition = new vscode.Position(targetLoc.line, targetLoc.column);
-  editor.selection = new vscode.Selection(targetPosition, targetPosition);
-  editor.revealRange(
-    new vscode.Range(targetPosition, targetPosition),
-    vscode.TextEditorRevealType.InCenter
-  );
-
-  const seenLines = new Set<number>();
-  const ranges = result.locations
-    .filter((loc) => {
-      if (seenLines.has(loc.line)) return false;
-      seenLines.add(loc.line);
-      return true;
-    })
-    .map((loc) => {
-      const lineLength = document.lineAt(loc.line).text.length;
-      return new vscode.Range(loc.line, 0, loc.line, lineLength);
-    });
-
-  editor.setDecorations(highlightDecorationType, ranges);
-
-  if (!preview) {
-    const clear = () => editor.setDecorations(highlightDecorationType, []);
-    const timeout = setTimeout(clear, 4000);
-    const sub = vscode.window.onDidChangeActiveTextEditor(() => {
-      clearTimeout(timeout);
-      clear();
-      sub.dispose();
-    });
-  }
-
-  return editor;
+  await revealLocations(picked.result.file, picked.result.locations, picked.locationIndex, false);
 }

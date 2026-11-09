@@ -5,6 +5,7 @@ const { extractClassesFromSource } = require("../out/astExtractor");
 const { parsePastedClassList, extractClassesFromPaste, isStyleInput, parsePastedStyleList, buildArbitraryIndex } = require("../out/classParser");
 const { scoreFile, searchTextInFile, rankFiles } = require("../out/matcher");
 const { findDuplicateClassGroups } = require("../out/duplicates");
+const { SourceText } = require("../out/text");
 
 function buildEntryFromSource(source, file) {
   const { classes, parseError } = extractClassesFromSource(source, file);
@@ -17,7 +18,7 @@ function buildEntryFromSource(source, file) {
     list.push(location);
     locations.set(className, list);
   }
-  return { file, classes: classSet, locations, mtimeMs: Date.now(), source, arbitraryIndex: buildArbitraryIndex(classSet) };
+  return { file, classes: classSet, locations, mtimeMs: Date.now(), text: new SourceText(file, source), arbitraryIndex: buildArbitraryIndex(classSet) };
 }
 
 function assert(cond, msg) {
@@ -297,6 +298,7 @@ assert(
 );
 // --- Test 13: AST Class Replacement ---
 const { computeReplacements } = require("../out/classReplacer");
+const spec = (targetClasses, replacementClasses, rawTarget, rawReplacement) => ({ targetClasses, replacementClasses, rawTarget, rawReplacement });
 
 function applyEdits(source, edits) {
   let result = source;
@@ -308,38 +310,38 @@ function applyEdits(source, edits) {
 
 // Case A: Simple replacement in className
 const srcReplaceA = `<div className="flex bg-red-500 p-4" />`;
-const editsA = computeReplacements(srcReplaceA, ["bg-red-500"], ["bg-blue-500"]);
+const editsA = computeReplacements(srcReplaceA, "/proj/x.tsx", spec(["bg-red-500"], ["bg-blue-500"]));
 const resultA = applyEdits(srcReplaceA, editsA);
 assert(resultA === `<div className="flex bg-blue-500 p-4" />`, "simple replacement inside className works");
 
 // Case B: Replacement inside ternary/conditional
 const srcReplaceB = `<div className={mobile ? "px-5" : "px-4"} />`;
-const editsB = computeReplacements(srcReplaceB, ["px-5"], ["px-6"]);
+const editsB = computeReplacements(srcReplaceB, "/proj/x.tsx", spec(["px-5"], ["px-6"]));
 const resultB = applyEdits(srcReplaceB, editsB);
 assert(resultB === `<div className={mobile ? "px-6" : "px-4"} />`, "replacement inside JSX ternary works");
 
 // Case C: Replacement inside template literal
 const srcReplaceC = "<span className={`bg-white ${isOpen ? 'shadow-md' : ''}`}>x</span>";
-const editsC = computeReplacements(srcReplaceC, ["bg-white"], ["bg-black"]);
+const editsC = computeReplacements(srcReplaceC, "/proj/x.tsx", spec(["bg-white"], ["bg-black"]));
 const resultC = applyEdits(srcReplaceC, editsC);
 assert(resultC === "<span className={`bg-black ${isOpen ? 'shadow-md' : ''}`}>x</span>", "replacement inside template literal works");
 
 // Case D: Deleting a class (replacement is empty)
 const srcReplaceD = `<div className="flex bg-red-500 p-4" />`;
-const editsD = computeReplacements(srcReplaceD, ["bg-red-500"], []);
+const editsD = computeReplacements(srcReplaceD, "/proj/x.tsx", spec(["bg-red-500"], []));
 const resultD = applyEdits(srcReplaceD, editsD);
 assert(resultD === `<div className="flex p-4" />`, "deleting a class works");
 
 // Case F: Replacement in non-className JSX attributes (e.g. href="/trip-planner")
 const srcReplaceF = `<Link href="/trip-planner">Trip Planner</Link>`;
-const editsF = computeReplacements(srcReplaceF, ["/trip-planner"], ["/planner"], "/trip-planner", "/planner");
+const editsF = computeReplacements(srcReplaceF, "/proj/x.tsx", spec(["/trip-planner"], ["/planner"], "/trip-planner", "/planner"));
 const resultF = applyEdits(srcReplaceF, editsF);
 assert(resultF === `<Link href="/planner">Trip Planner</Link>`, "replacement inside href attribute works");
 
 // Case G: the raw-text fallback (AST produced no edits) must respect word boundaries —
 // "card" must not match inside "cardWrapper".
 const srcReplaceG = `const cardWrapper = 1;\nconst card = 2;`;
-const editsG = computeReplacements(srcReplaceG, ["card"], ["box"], "card", "box");
+const editsG = computeReplacements(srcReplaceG, "/proj/x.tsx", spec(["card"], ["box"], "card", "box"));
 const resultG = applyEdits(srcReplaceG, editsG);
 assert(
   resultG === `const cardWrapper = 1;\nconst box = 2;`,
@@ -358,7 +360,7 @@ const previewSources = new Map([
   ["/proj/PreviewC.tsx", srcPreviewC],
 ]);
 
-const occurrences = collectReplacements(previewSources, ["bg-red-500"], ["bg-blue-500"]);
+const occurrences = collectReplacements(previewSources, spec(["bg-red-500"], ["bg-blue-500"]));
 assert(occurrences.length === 2, `collectReplacements finds one occurrence per file (got ${occurrences.length})`);
 assert(
   new Set(occurrences.map((o) => o.key)).size === occurrences.length,
@@ -369,7 +371,7 @@ assert(occA && occA.before.includes("bg-red-500"), "occurrence 'before' shows th
 assert(occA && occA.after.includes("bg-blue-500"), "occurrence 'after' shows the replacement text");
 assert(occA && occA.line === 0, `occurrence line is 0-based (got ${occA && occA.line})`);
 
-const occurrencesText = collectReplacements(previewSources, ["/trip-planner"], ["/planner"], "/trip-planner", "/planner");
+const occurrencesText = collectReplacements(previewSources, spec(["/trip-planner"], ["/planner"], "/trip-planner", "/planner"));
 assert(occurrencesText.length === 1, `collectReplacements finds raw text target occurrence (got ${occurrencesText.length})`);
 assert(occurrencesText[0].file === "/proj/PreviewC.tsx", "collectReplacements targets PreviewC.tsx");
 
@@ -377,8 +379,7 @@ assert(occurrencesText[0].file === "/proj/PreviewC.tsx", "collectReplacements ta
 const onlyOccB = occurrences.find((o) => o.file === "/proj/PreviewB.tsx");
 const partialApply = applySelectedEdits(
   previewSources,
-  ["bg-red-500"],
-  ["bg-blue-500"],
+  spec(["bg-red-500"], ["bg-blue-500"]),
   new Set([onlyOccB.key])
 );
 assert(partialApply.applied.length === 1, `only the selected occurrence is applied (got ${partialApply.applied.length})`);
@@ -392,8 +393,7 @@ const changedSources = new Map([
 ]);
 const staleApply = applySelectedEdits(
   changedSources,
-  ["bg-red-500"],
-  ["bg-blue-500"],
+  spec(["bg-red-500"], ["bg-blue-500"]),
   new Set(occurrences.map((o) => o.key)) // both original keys selected
 );
 assert(staleApply.applied.length === 1, `only the still-valid occurrence applies (got ${staleApply.applied.length})`);
@@ -406,11 +406,11 @@ const candidateIndex = new Map([
   ["/proj/PreviewB.tsx", buildEntryFromSource(srcPreviewB, "/proj/PreviewB.tsx")],
   ["/proj/PreviewC.tsx", buildEntryFromSource(srcPreviewC, "/proj/PreviewC.tsx")],
 ]);
-const candidates = filterCandidateFiles(candidateIndex, ["bg-red-500"]);
+const candidates = filterCandidateFiles(candidateIndex, spec(["bg-red-500"], []));
 assert(candidates.length === 2, `both class files are candidates for bg-red-500 (got ${candidates.length})`);
-const textCandidates = filterCandidateFiles(candidateIndex, ["/trip-planner"], "/trip-planner");
+const textCandidates = filterCandidateFiles(candidateIndex, spec(["/trip-planner"], [], "/trip-planner"));
 assert(textCandidates.length === 1 && textCandidates[0] === "/proj/PreviewC.tsx", "raw text target finds candidate file by source text");
-const noCandidates = filterCandidateFiles(candidateIndex, ["nonexistent-class"]);
+const noCandidates = filterCandidateFiles(candidateIndex, spec(["nonexistent-class"], []));
 assert(noCandidates.length === 0, "no candidates when the target class isn't indexed anywhere");
 
 // --- Test 14: Text term-coverage fallback (phrase not contiguous) ---
@@ -515,7 +515,7 @@ assert(ranked17[0].score === 1.0, `top result has score 1.0 (got ${ranked17[0].s
 assert(ranked17[1].file === "/proj/PartialMatch.tsx", `partial match file ranks SECOND (got ${ranked17[1].file})`);
 
 // --- Test 18: Markup files (.vue/.svelte/.astro/.html/.php) ---
-const { isMarkupFile } = require("../out/markupExtractor");
+const { isMarkupFile } = require("../out/languages");
 
 assert(isMarkupFile("/proj/App.vue"), "isMarkupFile recognizes .vue");
 assert(isMarkupFile("/proj/App.SVELTE"), "isMarkupFile is case-insensitive");
@@ -637,7 +637,7 @@ for (const garbage of ["{{", "$classes", "}}", "echo", "$x;"]) {
 
 // Replacing beside an interpolation must not clobber the interpolation itself.
 const interpSrc = `<div class="{{ $classes }} bg-red-500 p-4"></div>`;
-const interpEdits = computeReplacements(interpSrc, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/i.blade.php");
+const interpEdits = computeReplacements(interpSrc, "/proj/i.blade.php", spec(["bg-red-500"], ["bg-blue-500"], undefined, undefined));
 assert(
   applyEdits(interpSrc, interpEdits) === `<div class="{{ $classes }} bg-blue-500 p-4"></div>`,
   `replacement leaves the interpolation intact (got ${applyEdits(interpSrc, interpEdits)})`
@@ -667,7 +667,7 @@ assert(markupRanked[0].score === 1.0, `full markup class match scores 1.0 (got $
 // --- Test 19: Replacement inside markup files ---
 // Static attribute.
 const vueReplaceSrc = `<div class="flex bg-red-500 p-4"></div>`;
-const vueEdits = computeReplacements(vueReplaceSrc, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/A.vue");
+const vueEdits = computeReplacements(vueReplaceSrc, "/proj/A.vue", spec(["bg-red-500"], ["bg-blue-500"], undefined, undefined));
 assert(
   applyEdits(vueReplaceSrc, vueEdits) === `<div class="flex bg-blue-500 p-4"></div>`,
   "replacement inside a .vue static class attribute works"
@@ -676,7 +676,7 @@ assert(
 // Multiple target classes in one markup attribute — the raw-text fallback only ever handled the
 // first, so this is the case the attribute-aware markup path exists for.
 const multiSrc = `<div class="flex bg-red-500 p-4"></div>`;
-const multiEdits = computeReplacements(multiSrc, ["bg-red-500", "p-4"], ["bg-blue-500"], undefined, undefined, "/proj/M.vue");
+const multiEdits = computeReplacements(multiSrc, "/proj/M.vue", spec(["bg-red-500", "p-4"], ["bg-blue-500"], undefined, undefined));
 assert(
   applyEdits(multiSrc, multiEdits) === `<div class="flex bg-blue-500"></div>`,
   `multi-class markup replacement collapses both targets (got ${applyEdits(multiSrc, multiEdits)})`
@@ -684,7 +684,7 @@ assert(
 
 // Quoted segment inside a dynamic binding, with the surrounding expression left intact.
 const dynSrc = `<div :class="{ 'bg-red-500': isError, 'p-4': true }"></div>`;
-const dynEdits = computeReplacements(dynSrc, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/B.vue");
+const dynEdits = computeReplacements(dynSrc, "/proj/B.vue", spec(["bg-red-500"], ["bg-blue-500"], undefined, undefined));
 assert(
   applyEdits(dynSrc, dynEdits) === `<div :class="{ 'bg-blue-500': isError, 'p-4': true }"></div>`,
   `replacement inside a Vue :class object map works (got ${applyEdits(dynSrc, dynEdits)})`
@@ -692,7 +692,7 @@ assert(
 
 // Deleting a class out of markup.
 const delSrc = `<div class="flex bg-red-500 p-4"></div>`;
-const delEdits = computeReplacements(delSrc, ["bg-red-500"], [], undefined, undefined, "/proj/C.vue");
+const delEdits = computeReplacements(delSrc, "/proj/C.vue", spec(["bg-red-500"], [], undefined, undefined));
 assert(
   applyEdits(delSrc, delEdits) === `<div class="flex p-4"></div>`,
   `deleting a class from markup works (got ${applyEdits(delSrc, delEdits)})`
@@ -700,7 +700,7 @@ assert(
 
 // Svelte class: directive.
 const dirSrc = `<div class:bg-red-500={dark} class="p-4"></div>`;
-const dirEdits = computeReplacements(dirSrc, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/D.svelte");
+const dirEdits = computeReplacements(dirSrc, "/proj/D.svelte", spec(["bg-red-500"], ["bg-blue-500"], undefined, undefined));
 assert(
   applyEdits(dirSrc, dirEdits) === `<div class:bg-blue-500={dark} class="p-4"></div>`,
   `replacement of a Svelte class: directive works (got ${applyEdits(dirSrc, dirEdits)})`
@@ -708,18 +708,18 @@ assert(
 
 // A raw-text target in markup still falls through to the text replacement path.
 const hrefSrc = `<a href="/trip-planner" class="p-4">Planner</a>`;
-const hrefEdits = computeReplacements(hrefSrc, ["/trip-planner"], ["/planner"], "/trip-planner", "/planner", "/proj/E.html");
+const hrefEdits = computeReplacements(hrefSrc, "/proj/E.html", spec(["/trip-planner"], ["/planner"], "/trip-planner", "/planner"));
 assert(
   applyEdits(hrefSrc, hrefEdits) === `<a href="/planner" class="p-4">Planner</a>`,
   `raw text replacement in markup works (got ${applyEdits(hrefSrc, hrefEdits)})`
 );
 
 // A target that appears nowhere must produce no edits at all.
-const noopEdits = computeReplacements(`<div class="p-4"></div>`, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/F.vue");
+const noopEdits = computeReplacements(`<div class="p-4"></div>`, "/proj/F.vue", spec(["bg-red-500"], ["bg-blue-500"], undefined, undefined));
 assert(noopEdits.length === 0, `no edits when the target is absent from markup (got ${noopEdits.length})`);
 
 // JS files must be unaffected by the markup path.
-const jsStillWorks = computeReplacements(`<div className="flex bg-red-500" />`, ["bg-red-500"], ["bg-blue-500"], undefined, undefined, "/proj/G.tsx");
+const jsStillWorks = computeReplacements(`<div className="flex bg-red-500" />`, "/proj/G.tsx", spec(["bg-red-500"], ["bg-blue-500"], undefined, undefined));
 assert(
   applyEdits(`<div className="flex bg-red-500" />`, jsStillWorks) === `<div className="flex bg-blue-500" />`,
   "the AST path is still used for .tsx when a filePath is passed"

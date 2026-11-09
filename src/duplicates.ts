@@ -18,7 +18,7 @@ export interface DuplicateGroup {
  */
 export function findDuplicateClassGroups(
   index: Map<string, FileIndexEntry>,
-  minClasses = 3
+  minClasses: number
 ): DuplicateGroup[] {
   const groups = new Map<string, DuplicateGroup>();
 
