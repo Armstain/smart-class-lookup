@@ -1,5 +1,11 @@
 # Smart Class Search
 
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/armstain.smart-class-lookup?label=VS%20Code%20Marketplace&logo=visualstudiocode&logoColor=white&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=armstain.smart-class-lookup)
+[![Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/armstain.smart-class-lookup?label=installs&logo=visualstudiocode&logoColor=white&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=armstain.smart-class-lookup)
+[![Open VSX](https://img.shields.io/open-vsx/v/nazmul-hossain-adnan/smart-class-lookup?label=Open%20VSX&logo=eclipseide&logoColor=white&color=C160EF)](https://open-vsx.org/extension/nazmul-hossain-adnan/smart-class-lookup)
+[![Open VSX Downloads](https://img.shields.io/open-vsx/dt/nazmul-hossain-adnan/smart-class-lookup?label=downloads&logo=eclipseide&logoColor=white&color=C160EF)](https://open-vsx.org/extension/nazmul-hossain-adnan/smart-class-lookup)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Copy a class list out of Chrome DevTools, paste it into the sidebar or the
 Command Palette, and jump straight to the component that renders it - even
 when your codebase spreads those classes across `cn()`, `clsx()`,
@@ -7,6 +13,20 @@ when your codebase spreads those classes across `cn()`, `clsx()`,
 
 A plain text/regex search for the DevTools string will never find any of
 these. Smart Class Search will.
+
+## Install
+
+| Store | For | Link |
+| ----- | --- | ---- |
+| <img src="https://img.shields.io/badge/-VS%20Code%20Marketplace-007ACC?logo=visualstudiocode&logoColor=white" alt="VS Code Marketplace" /> | VS Code | [armstain.smart-class-lookup](https://marketplace.visualstudio.com/items?itemName=armstain.smart-class-lookup) |
+| <img src="https://img.shields.io/badge/-Open%20VSX-C160EF?logo=eclipseide&logoColor=white" alt="Open VSX" /> | VSCodium, Cursor, Windsurf, Gitpod, Eclipse Theia | [nazmul-hossain-adnan/smart-class-lookup](https://open-vsx.org/extension/nazmul-hossain-adnan/smart-class-lookup) |
+
+Or from the Quick Open (`Ctrl+P` / `Cmd+P`):
+
+```
+ext install armstain.smart-class-lookup              # VS Code Marketplace
+ext install nazmul-hossain-adnan.smart-class-lookup  # Open VSX editors
+```
 
 ## What's New in v0.4.11
 
