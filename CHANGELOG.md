@@ -1,5 +1,21 @@
 # Change Log
 
+## [0.4.11]
+
+### Improved
+- **Faster text search**: Each indexed file's lowercased text, lines and line offsets are cached, regexes are compiled once per query instead of once per file, and a file missing any significant query term is rejected with a single substring check before line-by-line scoring.
+- **No first-search stall**: Source text for cached files is loaded asynchronously during the index build, instead of synchronously on the extension host during the first search.
+
+### Fixed
+- **Sidebar**: The results list no longer adds a new mouse-leave listener on every search. File names are rendered as text, not HTML. Clearing the search closes an open replace preview. A failed or partly skipped apply refreshes the preview instead of leaving it stale. The preview toggle stays in sync after the panel is hidden and shown again.
+- **Consistent clipboard prefill**: The sidebar and the Command Palette use the same rule to decide whether clipboard text is a class list or style. A single word or plain prose is no longer auto-filled into the sidebar.
+- **Consistent replace results**: The Replace command and the sidebar show the same messages after applying.
+- **Activation**: The extension also activates when the sidebar is opened or one of its commands is run, not only on startup.
+- **Smaller package**: The extension icon was recompressed from 1.2MB to 290KB.
+
+### Internal
+- Query parsing, the replace pipeline, settings, file-type tables, Babel options and line/location helpers each live in one module instead of being copied across the extension, sidebar, extractors and matcher. Setting defaults now come only from `package.json`.
+
 ## [0.4.9]
 
 ### Improved

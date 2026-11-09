@@ -8,9 +8,19 @@ when your codebase spreads those classes across `cn()`, `clsx()`,
 A plain text/regex search for the DevTools string will never find any of
 these. Smart Class Search will.
 
-## What's New in v0.4.9
+## What's New in v0.4.11
 
-- **Faster, non-blocking indexing**: files are parsed in background worker threads, so a full
+- **Faster text search**: files that can't match are skipped before any per-line work, and each
+  file's lowercased text and line table are cached, so typing in the search box stays quick on
+  large workspaces. File contents are preloaded in the background while indexing, so the first
+  search no longer stalls reading every file.
+- **Consistent paste handling**: the sidebar and the Command Palette now use the same rule to
+  decide whether clipboard text looks like a class list or style, and the same result messages
+  after a replace.
+- **Sidebar fixes**: clearing the search closes a stale replace preview, a failed or partial
+  apply refreshes the preview, the preview toggle stays in sync after the panel is hidden, and
+  text highlights use the same terms the search matched on.
+- **Faster, non-blocking indexing** (v0.4.9): files are parsed in background worker threads, so a full
   build finishes sooner and VS Code (IntelliSense, formatters, Git) stays responsive while it runs.
 - **Sturdier indexing** (v0.4.8): one unparseable file can no longer break the build, huge and
   minified files are skipped, and the sidebar shows when an index is still building.
@@ -249,6 +259,11 @@ files…". To keep builds fast:
 - A file that fails to parse stays in the index with no classes, so it is still
   reachable by text search and isn't re-parsed on every start. The reason is
   logged to the **Smart Class Search** output channel.
+
+Text search keeps each indexed file's contents in memory (loaded during the
+build), so searching never touches the disk. Files that don't contain every
+significant query term are rejected with one substring check before any
+line-by-line scoring.
 
 ## Settings
 
